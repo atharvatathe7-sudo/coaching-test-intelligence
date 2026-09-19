@@ -519,3 +519,149 @@ def test_progress(
             status_code=404,
             detail=str(exc),
         )
+
+# ------------------------------------------------------------
+# Question Investigation
+# ------------------------------------------------------------
+
+from fastapi import Depends
+from .database.connection import get_db
+
+
+@router.get("/tests/{test_id}/questions/{question_number}/investigation")
+def question_investigation(
+    test_id: int,
+    question_number: int,
+    db=Depends(get_db),
+):
+    """
+    Return the evidence needed to investigate one question:
+    question metadata, aggregate performance, and every student's answer.
+    """
+
+    from sqlalchemy import func
+    from .database.models import (
+        Question,
+        Student,
+        StudentAnswer,
+        Chapter,
+        Topic,
+        Test,
+    )
+
+    test = db.get(Test, test_id)
+
+    if test is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Test {test_id} not found.",
+        )
+
+    question = (
+        db.query(Question)
+        .filter(
+            Question.test_id == test_id,
+            Question.question_number == question_number,
+        )
+        .first()
+    )
+
+    if question is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Question {question_number} not found.",
+        )
+
+    chapter_name = None
+    if question.chapter_id is not None:
+        chapter = db.get(Chapter, question.chapter_id)
+        if chapter is not None:
+            chapter_name = chapter.name
+
+    topic_name = None
+    if question.topic_id is not None:
+        topic = db.get(Topic, question.topic_id)
+        if topic is not None:
+            topic_name = topic.name
+
+    students = (
+        db.query(Student)
+        .filter(Student.batch_id == test.batch_id)
+        .order_by(Student.roll_number)
+        .all()
+    )
+
+    student_rows = []
+
+    correct_count = 0
+    wrong_count = 0
+    blank_count = 0
+
+    for student in students:
+        answer_record = (
+            db.query(StudentAnswer)
+            .filter(
+                StudentAnswer.test_id == test_id,
+                StudentAnswer.student_id == student.id,
+                StudentAnswer.question_id == question.id,
+            )
+            .first()
+        )
+
+        answer = None
+
+        if answer_record is not None:
+            answer = answer_record.answer
+
+        if answer is None or answer.strip() == "":
+            result = "Blank"
+            blank_count += 1
+        elif answer.strip().upper() == question.correct_answer.strip().upper():
+            result = "Correct"
+            correct_count += 1
+        else:
+            result = "Wrong"
+            wrong_count += 1
+
+        student_rows.append(
+            {
+                "student_id": student.id,
+                "roll_number": student.roll_number,
+                "student_name": student.name,
+                "answer": answer,
+                "result": result,
+            }
+        )
+
+    total_students = len(students)
+
+    def percentage(count):
+        if total_students == 0:
+            return 0.0
+        return round((count / total_students) * 100, 2)
+
+    return {
+        "test_id": test_id,
+        "test_name": test.name,
+        "question": {
+            "id": question.id,
+            "question_number": question.question_number,
+            "subject": question.subject,
+            "chapter_id": question.chapter_id,
+            "chapter_name": chapter_name,
+            "topic_id": question.topic_id,
+            "topic_name": topic_name,
+            "correct_answer": question.correct_answer,
+            "difficulty": question.difficulty,
+        },
+        "performance": {
+            "total_students": total_students,
+            "correct_count": correct_count,
+            "wrong_count": wrong_count,
+            "blank_count": blank_count,
+            "correct_percentage": percentage(correct_count),
+            "wrong_percentage": percentage(wrong_count),
+            "blank_percentage": percentage(blank_count),
+        },
+        "students": student_rows,
+    }
