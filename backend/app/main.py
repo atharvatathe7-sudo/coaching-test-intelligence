@@ -3,6 +3,7 @@ from sqlalchemy import text
 
 from .database.connection import Base, engine
 from .database import models  # noqa: F401
+from .api import router as api_router
 
 
 app = FastAPI(
@@ -10,9 +11,9 @@ app = FastAPI(
     version="0.1.0",
 )
 
-
-# Create database tables when the application starts.
 Base.metadata.create_all(bind=engine)
+
+app.include_router(api_router)
 
 
 @app.get("/")
@@ -48,6 +49,4 @@ def database_tables():
 
         tables = [row[0] for row in result]
 
-    return {
-        "tables": tables,
-    }
+    return {"tables": tables}
