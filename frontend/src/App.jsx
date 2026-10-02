@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import ImportPage from "./ImportPage";
 import "./App.css";
 
 const API = "";
@@ -533,6 +534,10 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const [view, setView] = useState("dashboard");
+  const [testsVersion, setTestsVersion] = useState(0);
+  const preferredTestId = useRef(null);
+
   useEffect(() => {
     async function loadTests() {
       try {
@@ -547,7 +552,11 @@ function App() {
         setTests(data.tests || []);
 
         if (data.tests?.length) {
-          setSelectedTest(data.tests[0]);
+          setSelectedTest(
+            data.tests.find(
+              (test) => test.id === preferredTestId.current
+            ) || data.tests[0]
+          );
         }
       } catch {
         setError(
@@ -559,7 +568,7 @@ function App() {
     }
 
     loadTests();
-  }, []);
+  }, [testsVersion]);
 
   useEffect(() => {
     if (!selectedTest) return;
@@ -755,6 +764,18 @@ function App() {
     0
   );
 
+  if (view === "import") {
+    return (
+      <ImportPage
+        onClose={(testId) => {
+          preferredTestId.current = testId ?? null;
+          setTestsVersion((version) => version + 1);
+          setView("dashboard");
+        }}
+      />
+    );
+  }
+
   if (investigation) {
     return (
       <div className="app-shell">
@@ -820,33 +841,43 @@ function App() {
           </div>
         </div>
 
-        <div className="test-selector">
-          <label htmlFor="test-select">
-            Test
-          </label>
+        <div className="topbar-actions">
+          <div className="test-selector">
+            <label htmlFor="test-select">
+              Test
+            </label>
 
-          <select
-            id="test-select"
-            value={selectedTest?.id || ""}
-            onChange={(event) => {
-              const test = tests.find(
-                (item) =>
-                  item.id ===
-                  Number(event.target.value)
-              );
+            <select
+              id="test-select"
+              value={selectedTest?.id || ""}
+              onChange={(event) => {
+                const test = tests.find(
+                  (item) =>
+                    item.id ===
+                    Number(event.target.value)
+                );
 
-              setSelectedTest(test);
-            }}
+                setSelectedTest(test);
+              }}
+            >
+              {tests.map((test) => (
+                <option
+                  key={test.id}
+                  value={test.id}
+                >
+                  {test.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <button
+            className="import-button"
+            onClick={() => setView("import")}
+            type="button"
           >
-            {tests.map((test) => (
-              <option
-                key={test.id}
-                value={test.id}
-              >
-                {test.name}
-              </option>
-            ))}
-          </select>
+            Import data
+          </button>
         </div>
       </header>
 

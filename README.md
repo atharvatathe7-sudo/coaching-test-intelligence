@@ -5,7 +5,7 @@ Turn every coaching test into a diagnostic report for your teachers.
 A prototype that adds an analytics layer on top of an institute's tests:
 **Detect → Investigate → Act → Measure**.
 
-Current capabilities: test evaluation, question / chapter / topic / student /
+Current capabilities: CSV data import, test evaluation, question / chapter / topic / student /
 batch analytics, a Teacher Action Report, Question Investigation,
 test-to-test progress, and Teacher Action Tracking.
 
@@ -22,7 +22,9 @@ backend/
     api.py             API routes (prefix /api)
     database/          SQLAlchemy engine and models (SQLite)
     schemas/           Request models
-    services/          evaluation, analytics, action_report, progress
+    services/          evaluation, analytics, action_report, progress,
+                       import_csv (parsing/report), importer (validate + commit)
+    import_api.py      CSV import routes (prefix /api/imports)
   requirements.txt     Runtime dependencies (pinned)
   requirements-dev.txt Runtime + test dependencies
 frontend/              React + Vite dashboard (src/App.jsx)
@@ -96,6 +98,56 @@ python -m pytest
 
 The tests build their own temporary database from the demo scripts, so they
 do not need (and never touch) `data/coaching.db`.
+
+## Importing real data (CSV)
+
+Open the dashboard and click **Import data**, or call the API directly.
+Import in this order; each file is validated first and nothing is saved
+until you confirm. Use UTF-8 CSV with a header row.
+
+| Stage | Required columns | Also supplied |
+|---|---|---|
+| 1. Roster (`roster.csv`) | `roll_number,name` | batch |
+| 2. Test setup (`test_setup.csv`) | `question_number,correct_answer,chapter,topic` | batch, test name, subject, test date (`YYYY-MM-DD`), marks for correct / wrong / blank (defaults 4 / -1 / 0) |
+| 3. Answers (`answers.csv`) | `roll_number,question_number,answer` | test |
+
+```
+roll_number,name            question_number,correct_answer,chapter,topic     roll_number,question_number,answer
+R1,Asha                     1,A,Mechanics,Kinematics                        R1,1,A
+R2,Bala                     2,C,Mechanics,Newton's Laws                     R1,2,
+```
+
+- Answers are `A`–`D`; a blank answer means unanswered. Long format only
+  (one row per student per question).
+- Students are matched by roll number within the batch, tests by
+  (batch, name, date), questions by number, and chapters/topics by name
+  (case and spacing ignored). IDs are never taken from the files.
+- **Validation** reports every problem with file, row, field and value.
+  Errors block the import (nothing is written); warnings do not.
+  Warnings include new chapters/topics (which must be confirmed), skipped
+  existing students, and students with missing answer rows (recorded as
+  blank).
+- **Transactions:** each import commits in a single transaction, so a
+  failure leaves no partial data.
+- **Evaluation** runs automatically after a successful answers import.
+  `POST /api/tests/{id}/evaluate` is still available.
+- **Re-import rules:** an existing roll number with the same name is
+  skipped, with a different name it is an error (names are never
+  overwritten). A test with the same batch/name/date is rejected and test
+  setups cannot be replaced. Answers already present are rejected unless
+  `replace=true`, which atomically replaces only the answers and results
+  (questions and teacher actions are kept).
+
+API (multipart form with a `file` field; responses are
+`{status: valid|invalid|imported, errors, warnings, summary}`):
+`POST /api/imports/roster`, `POST /api/imports/test-setup`,
+`POST /api/imports/answers`. `dry_run` defaults to `true`; send
+`dry_run=false` to commit. Test setup also takes
+`confirm_new_chapters_topics=true` when new chapters/topics are created.
+
+Existing local databases created before this version do not get the new
+unique constraints (batch name per institute; test name + date per batch);
+delete `data/coaching.db` and re-seed to get them.
 
 ## Demo workflow
 

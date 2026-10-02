@@ -21,13 +21,20 @@ def classify_answer(answer: str | None, correct_answer: str) -> str:
     return "wrong"
 
 
-def evaluate_test(db: Session, test_id: int) -> list[TestResult]:
+def evaluate_test(
+    db: Session,
+    test_id: int,
+    commit: bool = True,
+) -> list[TestResult]:
     """
     Evaluate every student's answers for one test.
 
     Compares student answers with the official answer key,
     calculates correct/wrong/blank counts, marks, and accuracy,
     and stores the results in the test_results table.
+
+    With commit=False the changes are only flushed, so the caller can
+    keep the evaluation inside its own transaction.
     """
 
     test = db.get(Test, test_id)
@@ -126,9 +133,12 @@ def evaluate_test(db: Session, test_id: int) -> list[TestResult]:
         db.add(result)
         results.append(result)
 
-    db.commit()
+    if commit:
+        db.commit()
 
-    for result in results:
-        db.refresh(result)
+        for result in results:
+            db.refresh(result)
+    else:
+        db.flush()
 
     return results

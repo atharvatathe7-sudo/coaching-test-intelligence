@@ -4,6 +4,7 @@ from sqlalchemy import text
 from .database.connection import Base, engine
 from .database import models  # noqa: F401
 from .api import router as api_router
+from .import_api import router as import_router
 
 
 app = FastAPI(
@@ -14,6 +15,7 @@ app = FastAPI(
 Base.metadata.create_all(bind=engine)
 
 app.include_router(api_router)
+app.include_router(import_router)
 
 
 @app.get("/")

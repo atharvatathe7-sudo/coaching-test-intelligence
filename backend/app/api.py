@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .database.connection import get_db
@@ -104,7 +105,16 @@ def create_batch(
     )
 
     db.add(batch)
-    db.commit()
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="A batch with this name already exists in the institute.",
+        )
+
     db.refresh(batch)
 
     return {
@@ -227,7 +237,16 @@ def create_test(
     )
 
     db.add(test)
-    db.commit()
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="A test with this name and date already exists in the batch.",
+        )
+
     db.refresh(test)
 
     return {

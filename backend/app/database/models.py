@@ -45,6 +45,14 @@ class Batch(Base):
         nullable=False,
     )
 
+    __table_args__ = (
+        UniqueConstraint(
+            "institute_id",
+            "name",
+            name="uq_batch_institute_name",
+        ),
+    )
+
 
 class Student(Base):
     __tablename__ = "students"
@@ -128,6 +136,15 @@ class Test(Base):
         DateTime,
         default=datetime.utcnow,
         nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "batch_id",
+            "name",
+            "test_date",
+            name="uq_test_batch_name_date",
+        ),
     )
 
 
