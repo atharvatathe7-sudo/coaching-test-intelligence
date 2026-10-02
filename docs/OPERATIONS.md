@@ -81,7 +81,7 @@ or, in production, if `COACHING_BACKUP_DIR` is missing or not writable.
 `GET /api/health` runs a query and compares the schema revision with the
 code:
 
-- `200 {"status": "ok", "database": "ok"}`
+- `200 {"status": "ok", "database": "ok", "schema_revision": "...", "expected_revision": "..."}`
 - `503 {"status": "error", "database": "unavailable" | "not_migrated" | "outdated"}`
 
 Point an uptime monitor at `https://<domain>/api/health`. It exposes no

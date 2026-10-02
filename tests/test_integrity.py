@@ -290,7 +290,13 @@ def test_upgrade_downgrade_round_trip(tmp_path):
 def test_health_ok(client):
     response = client.get("/api/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "database": "ok"}
+    body = response.json()
+    assert body == {
+        "status": "ok",
+        "database": "ok",
+        "schema_revision": expected_revision(),
+        "expected_revision": expected_revision(),
+    }
 
 
 def test_schema_status_detects_problems(tmp_path):

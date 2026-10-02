@@ -24,25 +24,27 @@ backend/
   alembic/             Database migrations (alembic upgrade head)
   app/
     main.py            FastAPI app, middleware, startup checks, /api/health
-    config.py          Settings from environment variables
+    config.py          Mode, data directory, paths and settings (single source)
+    frontend_serving.py Serves the built React app in local mode
     api.py             Main API routes (signed-in users)
     auth_api.py        Login, logout, current user, password change
     users_api.py       Admin user management
     corrections_api.py Admin corrections + audit log
     import_api.py      CSV imports and answer-key correction (admin)
     security/          Sessions, passwords, CSRF, body limits, ownership checks
-    database/          Engine (SQLite pragmas), models, schema check
+    database/          Engine (SQLite pragmas), models, schema check,
+                       startup.py (safe local-mode migration)
     services/          evaluation, analytics, action_report, progress,
                        action_outcomes, importer, audit
     ops/               Backups, restore verification, retention
   requirements.txt     Runtime dependencies (pinned)
   requirements-dev.txt Runtime + test dependencies
 frontend/              React + Vite dashboard (src/App.jsx, api.js, AdminPage.jsx)
-scripts/               seed_demo.py, create_test_02.py, manage.py, backup.py
+scripts/               run_local.py, seed_demo.py, create_test_02.py, manage.py, backup.py
 deploy/                Caddy, systemd units, environment template, upgrade.sh
 docs/OPERATIONS.md     Deployment, backups, restore, pilot checklist
 tests/                 pytest suite
-data/                  Local SQLite database (generated, not in Git)
+data/                  Development-mode SQLite database (generated, not in Git)
 ```
 
 ## Backend setup
@@ -100,9 +102,13 @@ http://127.0.0.1:8000/docs
 | Variable | Default | Purpose |
 |---|---|---|
 | `COACHING_DB_PATH` | `data/coaching.db` | SQLite file to use. The test suite sets this to a temporary file. |
-| `COACHING_ENV` | `development` | `production` enables Secure cookies, hides API docs, and requires a backup directory. |
+| `COACHING_APP_MODE` | `development` | `development`, `local` or `production` (`COACHING_ENV` is the older name). `production` enables Secure cookies, hides API docs, and requires a backup directory. `local` is described below. An unknown value stops startup. |
+| `COACHING_DATA_DIR` | unset (local: platform default) | Data directory for local mode (`data/ backups/ uploads/ logs/ exports/ config/`). |
+| `COACHING_HOST` / `COACHING_PORT` | `127.0.0.1` / `8000` | Address used by `scripts/run_local.py`. |
+| `COACHING_SERVE_FRONTEND` | on in local mode | Whether FastAPI serves `frontend/dist`. `COACHING_FRONTEND_DIST` changes the folder. |
+| `COACHING_AUTO_MIGRATE` | on in local mode | Whether startup applies migrations (see below). Never on in development or production. |
 | `COACHING_BACKUP_DIR` | unset | Where backups go. Required in production; when set, a safety backup is taken before destructive changes. |
-| `COACHING_COOKIE_SECURE` | off in development | Send the session cookie only over HTTPS (always on in production). |
+| `COACHING_COOKIE_SECURE` | off in development and local | Send the session cookie only over HTTPS (always on in production). |
 
 No application secret is needed. See `deploy/coaching.env.example`.
 
@@ -262,6 +268,94 @@ action on the Teacher Attention cards.
    (Test 02 is dated one week after Test 01).
 7. As admin, **Admin → Test corrections** shows the answer-key correction,
    metadata edits and the audit log.
+
+## Local Prototype Setup
+
+The product is designed to run on **one institute-owned computer**, with
+the browser on that same computer, no internet, no cloud and no web
+server in front of it. There are two ways to run it; do not mix them up:
+
+| | Development mode | Local prototype mode |
+|---|---|---|
+| For | changing the code | using the app |
+| Mode | `development` (default) | `local` |
+| Frontend | Vite dev server (`npm run dev`, port 5173) | built once (`npm run build`), served by FastAPI |
+| Database | `data/coaching.db` in the source tree | `<data dir>/data/coaching.db` |
+| Migrations | you run `alembic upgrade head` | applied at startup (backed up first) |
+| API docs | on | off |
+
+**Prerequisites:** Python 3.11+ and Node.js 20.19+ or 22.12+ (Node is needed only to
+build the frontend once).
+
+```bash
+# 1. Install dependencies
+pip install -r backend/requirements.txt
+cd frontend && npm ci && npm run build && cd ..      # 2. Build the frontend
+
+# 3. (Optional) choose where data lives; see "Where local data lives".
+#    Skip this to use the default.
+#    Windows (cmd):  set COACHING_DATA_DIR=D:\CoachingIntel
+#    Linux/macOS:    export COACHING_DATA_DIR=/srv/coaching-intel
+
+# 4. Create the data directory and database (runs the migrations)
+python scripts/run_local.py --migrate-only
+
+# 5. Create the first institute and its admin (prompts for a password)
+python scripts/manage.py create-institute --name "My Institute" \
+    --admin-name "Your Name" --admin-email you@example.com
+
+# 6. Start the app, then open http://127.0.0.1:8000/ in a browser
+python scripts/run_local.py
+```
+
+Sign in with the admin you created. To stop, press `Ctrl+C` in the
+window. To restart, run step 6 again: existing data is kept. After
+updating the code, run steps 1-2 again and then step 6; if the new
+version needs a database migration, startup takes a backup first (in
+`<data dir>/backups/`) and then migrates.
+
+`scripts/seed_demo.py` and `scripts/create_test_02.py` load the demo
+institute and tests (sign-in details in `CLAUDE.md`) into an empty
+database, as in development.
+
+**Safe startup.** In local mode startup never resets, deletes or
+recreates a database. A new, empty database is created by running the
+migrations. A database from an older version is first copied to
+`backups/` (checked with `PRAGMA integrity_check`) and only then
+migrated; if the backup fails, nothing is changed. A database with tables
+but no migration history, or from a *newer* version of the app, is
+refused and left untouched, with a message saying why.
+
+**Where local data lives.** Under the data directory (`COACHING_DATA_DIR`,
+default `%LOCALAPPDATA%\CoachingIntel` on Windows and
+`~/.local/share/CoachingIntel` elsewhere): `data/` (the SQLite database),
+`backups/`, `uploads/`, `logs/`, `exports/`, `config/`. `uploads/`, `logs/`
+and `exports/` are created for later stages and are empty today. Copy the
+whole folder (with the app stopped) to move or back up the installation.
+
+**Network access.** The default address is `127.0.0.1`, reachable only
+from this computer. To let other computers on the network connect, set
+`COACHING_HOST=0.0.0.0` (and optionally `COACHING_PORT`) explicitly and
+allow the port through the computer's firewall. That traffic is plain,
+unencrypted HTTP, so use it only on a network you trust. Settings can also
+be kept in a file (`docs/local.env.example`) passed with `--env-file`.
+
+**Session cookies in local mode.** The browser reaches the app over plain
+HTTP, where a `Secure` cookie would never be sent back and sign-in would
+silently fail, so in local mode the cookie is not marked `Secure`
+(`COACHING_COOKIE_SECURE=1` turns it on, e.g. behind an HTTPS proxy). It
+stays `HttpOnly` and `SameSite=Lax`, tokens are stored hashed on the
+server, and nothing is put in browser storage. Production mode always
+sets `Secure`.
+
+**Offline.** The app makes no outbound network calls: no CDN, remote
+font, analytics or API at runtime.
+
+**Not tested / not included.** This section has been run on Linux only.
+Windows paths and behaviour are prepared for (platform-aware defaults,
+no Linux-only paths in the runtime) but **have not been tested on
+Windows**. There is no installer, Windows service, bundled Python, tray
+app or first-run setup screen yet.
 
 ## Production
 

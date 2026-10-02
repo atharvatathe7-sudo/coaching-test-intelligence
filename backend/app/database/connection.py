@@ -1,22 +1,12 @@
-import os
-from pathlib import Path
-
 from sqlalchemy import MetaData, create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
+from .. import config
 
-# Project root:
-# coaching-test-intelligence/
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
-# SQLite database. Defaults to data/coaching.db; set COACHING_DB_PATH
-# to use a different file (the test suite uses this for a temp database).
-DATABASE_PATH = Path(
-    os.environ.get(
-        "COACHING_DB_PATH",
-        PROJECT_ROOT / "data" / "coaching.db",
-    )
-)
+# Re-exported for existing callers. Every path is decided in config.py.
+PROJECT_ROOT = config.PROJECT_ROOT
+DATABASE_PATH = config.DATABASE_PATH
 DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 DATABASE_URL = f"sqlite:///{DATABASE_PATH}"

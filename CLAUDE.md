@@ -112,6 +112,14 @@ Security and operations (Milestone 4):
   transaction; audit details never contain student names, roll numbers,
   answers or passwords.
 
+Local runtime (Stage 1): the product runs on one institute-owned computer.
+`backend/app/config.py` is the single source of mode (`development`,
+`local`, `production`), the data directory and every path from it;
+`database/startup.py` safely migrates in local mode (backup first, fail
+closed); `frontend_serving.py` serves `frontend/dist`; `scripts/run_local.py`
+starts it. See README "Local Prototype Setup". No Caddy/systemd is needed
+locally; `deploy/` and `docs/OPERATIONS.md` are the server option.
+
 Business logic:
 
 - `backend/app/services/evaluation.py`

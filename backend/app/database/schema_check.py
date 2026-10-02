@@ -25,6 +25,14 @@ def expected_revision() -> str:
     return ScriptDirectory.from_config(config).get_current_head()
 
 
+@lru_cache(maxsize=1)
+def known_revisions() -> frozenset[str]:
+    """Every revision the shipped migration scripts define."""
+    config = Config(str(ALEMBIC_INI))
+    script = ScriptDirectory.from_config(config)
+    return frozenset(rev.revision for rev in script.walk_revisions())
+
+
 def current_revision(connection) -> str | None:
     """The revision recorded in the database, or None if unmigrated."""
     has_table = connection.execute(

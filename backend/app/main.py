@@ -7,7 +7,14 @@ from fastapi.responses import JSONResponse
 
 from .database.connection import engine
 from .database import models  # noqa: F401
-from .database.schema_check import require_current_schema, schema_status
+from .database.schema_check import (
+    current_revision,
+    expected_revision,
+    require_current_schema,
+    schema_status,
+)
+from .database.startup import prepare_local_runtime
+from .frontend_serving import install_frontend
 from . import config
 from .api import router as api_router
 from .auth_api import router as auth_router
@@ -38,9 +45,15 @@ def check_production_settings() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Fail fast if migrations have not been applied. The schema is never
-    # created implicitly.
-    require_current_schema(engine)
+    if config.AUTO_MIGRATE:
+        # Local mode: create the data directory and bring the database to
+        # head (backing it up first when it already holds data). Refusals
+        # raise with a clear message and leave the database untouched.
+        prepare_local_runtime(engine)
+    else:
+        # Fail fast if migrations have not been applied. The schema is
+        # never created implicitly.
+        require_current_schema(engine)
     check_production_settings()
     yield
 
@@ -56,7 +69,8 @@ app = FastAPI(
 )
 
 # CORS is deliberately not enabled: the frontend is served from the same
-# origin (Caddy in production, the Vite proxy in development).
+# origin (FastAPI in local mode, a reverse proxy in production, the Vite
+# proxy in development).
 app.add_middleware(CSRFMiddleware)
 # Added last so it runs first: oversized bodies are refused before
 # anything else reads them.
@@ -69,13 +83,18 @@ app.include_router(corrections_router)
 app.include_router(import_router)
 
 
-@app.get("/")
-def root():
-    return {
-        "application": "Coaching Test Intelligence",
-        "version": "0.1.0",
-        "status": "running",
-    }
+if config.SERVE_FRONTEND:
+    # "/" and client-side routes return the built React app.
+    install_frontend(app, config.FRONTEND_DIST)
+else:
+
+    @app.get("/")
+    def root():
+        return {
+            "application": "Coaching Test Intelligence",
+            "version": "0.1.0",
+            "status": "running",
+        }
 
 
 @app.get("/api/health")
@@ -93,4 +112,13 @@ def health():
             content={"status": "error", "database": status},
         )
 
-    return {"status": "ok", "database": "ok"}
+    # status == "ok" means the revision matches; report it for diagnosis.
+    with engine.connect() as connection:
+        revision = current_revision(connection)
+
+    return {
+        "status": "ok",
+        "database": "ok",
+        "schema_revision": revision,
+        "expected_revision": expected_revision(),
+    }
