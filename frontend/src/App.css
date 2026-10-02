@@ -696,3 +696,47 @@ select {
   margin-top: 6px;
   color: #c84c38;
 }
+
+/* ---------- Action outcome (observed next test) ---------- */
+
+.action-outcome {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #d5dbe5;
+  color: #475467;
+}
+
+.outcome-target {
+  font-weight: 650;
+}
+
+.outcome-rows {
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+.outcome-label {
+  color: #6c7688;
+  font-weight: 650;
+}
+
+.outcome-change {
+  margin-top: 2px;
+}
+
+.outcome-message,
+.outcome-meta {
+  margin-top: 4px;
+  color: #6c7688;
+}
+
+.outcome-meta {
+  font-size: 11px;
+}
+
+.outcome-note {
+  margin-top: 6px;
+  color: #98a1b0;
+  font-size: 11px;
+  font-style: italic;
+}

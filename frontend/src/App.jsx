@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import ActionOutcome from "./ActionOutcome";
 import ImportPage from "./ImportPage";
 import "./App.css";
 
@@ -377,7 +378,7 @@ function actionLabel(value) {
   return match ? match[1] : value;
 }
 
-function ActionTracker({ item, testId, actions, onSaved }) {
+function ActionTracker({ item, testId, actions, outcomes, onSaved }) {
   const [actionType, setActionType] = useState("review");
   const [status, setStatus] = useState("planned");
   const [note, setNote] = useState("");
@@ -466,6 +467,7 @@ function ActionTracker({ item, testId, actions, onSaved }) {
             Recorded{" "}
             {new Date(action.created_at + "Z").toLocaleDateString()}
           </div>
+          <ActionOutcome outcome={outcomes[action.id]} />
         </div>
       ))}
 
@@ -524,6 +526,7 @@ function App() {
   const [actionReport, setActionReport] = useState(null);
 
   const [teacherActions, setTeacherActions] = useState([]);
+  const [actionOutcomes, setActionOutcomes] = useState({});
   const [progress, setProgress] = useState(null);
   const [progressLoading, setProgressLoading] = useState(false);
   const [progressError, setProgressError] = useState("");
@@ -537,6 +540,27 @@ function App() {
   const [view, setView] = useState("dashboard");
   const [testsVersion, setTestsVersion] = useState(0);
   const preferredTestId = useRef(null);
+
+  // Outcomes are extra information: failures must never affect actions.
+  async function loadOutcomes(testId) {
+    try {
+      const response = await fetch(
+        `${API}/api/tests/${testId}/actions/outcomes`
+      );
+
+      if (!response.ok) throw new Error("Outcome request failed.");
+
+      const data = await response.json();
+
+      setActionOutcomes(
+        Object.fromEntries(
+          data.outcomes.map((outcome) => [outcome.action.id, outcome])
+        )
+      );
+    } catch {
+      setActionOutcomes({});
+    }
+  }
 
   useEffect(() => {
     async function loadTests() {
@@ -630,6 +654,8 @@ function App() {
         } catch {
           setTeacherActions([]);
         }
+
+        loadOutcomes(selectedTest.id);
       } catch {
         setError("Could not load test analytics.");
       } finally {
@@ -741,6 +767,8 @@ function App() {
         ? current.map((a) => (a.id === saved.id ? saved : a))
         : [...current, saved]
     );
+
+    loadOutcomes(saved.test_id);
   }
 
   function closeInvestigation() {
@@ -1029,6 +1057,7 @@ function App() {
                             a.finding_title === item.title
                         )}
                         item={item}
+                        outcomes={actionOutcomes}
                         onSaved={recordAction}
                         testId={selectedTest.id}
                       />

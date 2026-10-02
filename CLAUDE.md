@@ -242,6 +242,8 @@ Current comparison includes:
 - biggest improvements
 - biggest declines
 
+Teacher action outcomes (`services/action_outcomes.py`) report the observed change in a topic/chapter between a source test and the next comparable test (same batch and subject, strictly later date, with answers and the target). They must use observed-change wording only and never claim causation. Demo Test 02 is dated 7 days after Test 01.
+
 Performance comparisons should use percentages where appropriate so different test sizes remain comparable.
 
 The dashboard also contains a Progress vs Previous Test section.

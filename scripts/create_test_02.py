@@ -1,5 +1,5 @@
 import sys
-from datetime import date
+from datetime import timedelta
 from pathlib import Path
 
 # Allow importing backend.app...
@@ -62,7 +62,8 @@ def create_test_02():
             batch_id=test_01.batch_id,
             name="Physics Test 02",
             subject=test_01.subject,
-            test_date=date.today(),
+            # One week after Test 01 so it is a strictly later test.
+            test_date=test_01.test_date + timedelta(days=7),
             marks_correct=test_01.marks_correct,
             marks_wrong=test_01.marks_wrong,
             marks_blank=test_01.marks_blank,

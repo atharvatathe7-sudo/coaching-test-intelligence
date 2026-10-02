@@ -5,7 +5,7 @@ Turn every coaching test into a diagnostic report for your teachers.
 A prototype that adds an analytics layer on top of an institute's tests:
 **Detect → Investigate → Act → Measure**.
 
-Current capabilities: CSV data import, test evaluation, question / chapter / topic / student /
+Current capabilities: CSV data import, test evaluation, action outcomes, question / chapter / topic / student /
 batch analytics, a Teacher Action Report, Question Investigation,
 test-to-test progress, and Teacher Action Tracking.
 
@@ -149,6 +149,32 @@ Existing local databases created before this version do not get the new
 unique constraints (batch name per institute; test name + date per batch);
 delete `data/coaching.db` and re-seed to get them.
 
+## Action outcomes (observed next test)
+
+`GET /api/tests/{test_id}/actions/outcomes` returns, for each teacher
+action on a test, what was observed in the next comparable test. It
+reports an **observed change only**; it never claims the action caused it.
+
+- **Target:** the action's topic, else its question's topic, else its
+  chapter. A question action is measured through its topic ("Topic of
+  Question 4: Kinematics"); question numbers are never matched across tests.
+- **Next comparable test:** same batch, same subject (case/spacing
+  ignored), a strictly later `test_date` than the *source test*, ordered by
+  `(test_date, id)`. Same-date tests do not count, and the action's
+  timestamp is not used. Later tests with no imported answers, or without
+  the target, are skipped (listed in `skipped_tests`).
+- **Measure:** the existing topic/chapter correct percentage
+  (`correct / responses`), so marking schemes do not matter. Needs at
+  least 10 responses in both tests; the change is in percentage points.
+- **Status:** `measured`, `no_subsequent_test`, `topic_absent`,
+  `chapter_absent`, `insufficient_data` or `no_target`. Absence is never
+  reported as 0%.
+- **Caveats:** `action_still_planned`, `action_recorded_after_next_test`,
+  `marking_scheme_differs`.
+
+Outcomes are computed on read (nothing is stored) and shown under each
+action on the Teacher Attention cards.
+
 ## Demo workflow
 
 1. Start the backend and the frontend.
@@ -158,3 +184,5 @@ delete `data/coaching.db` and re-seed to get them.
 4. Record a teacher action (review / reteach / revise / monitor / no action)
    on a finding.
 5. Check **Progress vs Previous Test** for the change from Test 01 to Test 02.
+6. On Test 01, the recorded action shows the observed result in Test 02
+   (Test 02 is dated one week after Test 01).

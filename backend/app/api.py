@@ -33,6 +33,7 @@ from .services.analytics import (
 )
 from .services.action_report import generate_teacher_action_report
 from .services.progress import compare_tests
+from .services.action_outcomes import get_action_outcomes
 
 
 router = APIRouter(prefix="/api")
@@ -652,6 +653,20 @@ def list_teacher_actions(
         "test_id": test_id,
         "actions": [_serialize_action(a, db) for a in actions],
     }
+
+
+@router.get("/tests/{test_id}/actions/outcomes")
+def teacher_action_outcomes(
+    test_id: int,
+    db: Session = Depends(get_db),
+):
+    try:
+        outcomes = get_action_outcomes(db, test_id)
+
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    return {"test_id": test_id, "outcomes": outcomes}
 
 
 @router.patch("/actions/{action_id}")
