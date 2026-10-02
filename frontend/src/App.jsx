@@ -549,7 +549,7 @@ function App() {
         if (data.tests?.length) {
           setSelectedTest(data.tests[0]);
         }
-      } catch (err) {
+      } catch {
         setError(
           "Could not connect to the FastAPI backend. Make sure the backend server is running."
         );
@@ -621,7 +621,7 @@ function App() {
         } catch {
           setTeacherActions([]);
         }
-      } catch (err) {
+      } catch {
         setError("Could not load test analytics.");
       } finally {
         setLoading(false);
@@ -719,7 +719,7 @@ function App() {
       const data = await response.json();
 
       setInvestigation(data);
-    } catch (err) {
+    } catch {
       setError("Could not load question investigation.");
     } finally {
       setInvestigationLoading(false);

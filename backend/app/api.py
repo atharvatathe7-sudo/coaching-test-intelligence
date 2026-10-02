@@ -23,7 +23,7 @@ from .schemas.api import (
     TeacherActionCreate,
     TeacherActionUpdate,
 )
-from .services.evaluation import evaluate_test
+from .services.evaluation import classify_answer, evaluate_test
 from .services.analytics import (
     analyze_questions,
     analyze_topics_and_chapters,
@@ -781,14 +781,14 @@ def question_investigation(
         if answer_record is not None:
             answer = answer_record.answer
 
-        if answer is None or answer.strip() == "":
-            result = "Blank"
+        outcome = classify_answer(answer, question.correct_answer)
+        result = outcome.capitalize()
+
+        if outcome == "blank":
             blank_count += 1
-        elif answer.strip().upper() == question.correct_answer.strip().upper():
-            result = "Correct"
+        elif outcome == "correct":
             correct_count += 1
         else:
-            result = "Wrong"
             wrong_count += 1
 
         student_rows.append(

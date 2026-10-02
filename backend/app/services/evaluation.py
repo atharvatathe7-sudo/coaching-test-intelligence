@@ -3,6 +3,24 @@ from sqlalchemy.orm import Session
 from ..database.models import Question, StudentAnswer, Test, TestResult
 
 
+def classify_answer(answer: str | None, correct_answer: str) -> str:
+    """
+    Single definition of how a response is classified.
+
+    - "blank":   no answer (None or whitespace only)
+    - "correct": answer matches the official key (case/space-insensitive)
+    - "wrong":   an attempted answer that does not match the key
+    """
+
+    if answer is None or answer.strip() == "":
+        return "blank"
+
+    if answer.strip().upper() == correct_answer.strip().upper():
+        return "correct"
+
+    return "wrong"
+
+
 def evaluate_test(db: Session, test_id: int) -> list[TestResult]:
     """
     Evaluate every student's answers for one test.
@@ -70,14 +88,15 @@ def evaluate_test(db: Session, test_id: int) -> list[TestResult]:
             if question is None:
                 continue
 
-            answer = student_answer.answer
+            outcome = classify_answer(
+                student_answer.answer,
+                question.correct_answer,
+            )
 
-            if answer is None or answer.strip() == "":
+            if outcome == "blank":
                 blank_count += 1
-
-            elif answer.strip().upper() == question.correct_answer.strip().upper():
+            elif outcome == "correct":
                 correct_count += 1
-
             else:
                 wrong_count += 1
 

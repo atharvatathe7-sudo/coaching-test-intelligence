@@ -22,7 +22,14 @@ from backend.app.database.models import (
 )
 
 
-def create_demo_data():
+# Fixed seed so every fresh demo database contains the same data.
+# This seed reproduces the Test 01 values documented in CLAUDE.md.
+DEMO_SEED = 15173
+
+
+def create_demo_data(seed=DEMO_SEED):
+    random.seed(seed)
+
     Base.metadata.create_all(bind=engine)
 
     db = SessionLocal()

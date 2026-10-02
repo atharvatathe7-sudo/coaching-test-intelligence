@@ -8,6 +8,7 @@ from ..database.models import (
     Test,
     Topic,
 )
+from .evaluation import classify_answer
 
 
 def analyze_questions(db: Session, test_id: int) -> list[dict]:
@@ -47,17 +48,15 @@ def analyze_questions(db: Session, test_id: int) -> list[dict]:
         blank_count = 0
 
         for student_answer in answers:
-            answer = student_answer.answer
+            outcome = classify_answer(
+                student_answer.answer,
+                question.correct_answer,
+            )
 
-            if answer is None or answer.strip() == "":
+            if outcome == "blank":
                 blank_count += 1
-
-            elif (
-                answer.strip().upper()
-                == question.correct_answer.strip().upper()
-            ):
+            elif outcome == "correct":
                 correct_count += 1
-
             else:
                 wrong_count += 1
 
@@ -339,19 +338,16 @@ def analyze_students(
             else:
                 answer = student_answer.answer
 
-            if answer is None or answer.strip() == "":
-                response_type = "blank"
+            response_type = classify_answer(
+                answer,
+                question.correct_answer,
+            )
+
+            if response_type == "blank":
                 blank_count += 1
-
-            elif (
-                answer.strip().upper()
-                == question.correct_answer.strip().upper()
-            ):
-                response_type = "correct"
+            elif response_type == "correct":
                 correct_count += 1
-
             else:
-                response_type = "wrong"
                 wrong_count += 1
 
             chapter_id = question.chapter_id
