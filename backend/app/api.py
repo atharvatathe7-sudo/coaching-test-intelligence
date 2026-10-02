@@ -9,7 +9,7 @@ see authorized objects. Admin-only routes add require_admin.
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -43,6 +43,11 @@ from .services.analytics import (
     analyze_topics_and_chapters,
 )
 from .services.evaluation import classify_answer, evaluate_test
+from .services.excel_export import (
+    XLSX_MEDIA_TYPE,
+    build_test_workbook,
+    export_filename,
+)
 from .services.progress import compare_tests
 
 
@@ -528,6 +533,36 @@ def test_progress(
 
     except ValueError as exc:
         raise _not_found_from(exc)
+
+
+# -------------------------------------------------------------------
+# Excel export
+# -------------------------------------------------------------------
+
+@router.get("/tests/{test_id}/export.xlsx")
+def export_test_workbook(
+    test: Test = Depends(owned_test),
+    db: Session = Depends(get_db),
+):
+    """
+    One workbook with the test's results and intelligence. Built in
+    memory for this request and never stored.
+    """
+
+    content = build_test_workbook(db, test)
+
+    return Response(
+        content=content,
+        media_type=XLSX_MEDIA_TYPE,
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{export_filename(test)}"'
+            ),
+            # Contains student data: never cached by the browser or a proxy.
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 # -------------------------------------------------------------------

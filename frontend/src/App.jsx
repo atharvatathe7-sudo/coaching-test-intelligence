@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import ActionOutcome from "./ActionOutcome";
 import AdminPage from "./AdminPage";
-import { apiFetch, isAbortError } from "./api";
+import { apiDownload, apiFetch, isAbortError } from "./api";
 import ImportPage from "./ImportPage";
 import "./App.css";
 
@@ -520,6 +520,8 @@ function App({ user, onLogout }) {
 
   const [teacherActions, setTeacherActions] = useState([]);
   const [actionOutcomes, setActionOutcomes] = useState({});
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
   // Progress result tagged with the test pair it belongs to, so a result
   // for a previous selection is never shown (no reset needed on change).
   const [progressResult, setProgressResult] = useState({
@@ -643,6 +645,36 @@ function App({ user, onLogout }) {
 
     return () => controller.abort();
   }, [selectedTest]);
+
+  async function exportExcel() {
+    if (!selectedTest || exporting) return;
+
+    setExporting(true);
+    setExportError("");
+
+    try {
+      const { blob, filename } = await apiDownload(
+        `/api/tests/${selectedTest.id}/export.xlsx`
+      );
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportError(
+        err?.name === "ApiError"
+          ? err.message
+          : "The Excel file could not be created. Please try again."
+      );
+    } finally {
+      setExporting(false);
+    }
+  }
 
   // Latest earlier test for the same batch and subject.
   const previousTest = selectedTest
@@ -940,8 +972,27 @@ function App({ user, onLogout }) {
                 </p>
               </div>
 
-              <div className="hero-badge">
-                Teacher view
+              <div className="hero-side">
+                <div className="hero-badge">
+                  Teacher view
+                </div>
+
+                <button
+                  className="import-button"
+                  disabled={exporting}
+                  onClick={exportExcel}
+                  type="button"
+                >
+                  {exporting
+                    ? "Preparing Excel…"
+                    : "Export Excel"}
+                </button>
+
+                {exportError && (
+                  <div className="export-error" role="alert">
+                    {exportError}
+                  </div>
+                )}
               </div>
             </section>
 

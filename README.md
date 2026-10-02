@@ -7,7 +7,7 @@ A prototype that adds an analytics layer on top of an institute's tests:
 
 Current capabilities: CSV data import, test evaluation, action outcomes, question / chapter / topic / student /
 batch analytics, a Teacher Action Report, Question Investigation,
-test-to-test progress, and Teacher Action Tracking.
+test-to-test progress, Teacher Action Tracking, and Excel export of a test.
 
 It is built for a controlled pilot with one real institute: sign-in with
 server-side sessions, admin/teacher roles, institute isolation, database
@@ -35,7 +35,7 @@ backend/
     database/          Engine (SQLite pragmas), models, schema check,
                        startup.py (safe local-mode migration)
     services/          evaluation, analytics, action_report, progress,
-                       action_outcomes, importer, audit
+                       action_outcomes, importer, audit, excel_export
     ops/               Backups, restore verification, retention
   requirements.txt     Runtime dependencies (pinned)
   requirements-dev.txt Runtime + test dependencies
@@ -356,6 +356,34 @@ Windows paths and behaviour are prepared for (platform-aware defaults,
 no Linux-only paths in the runtime) but **have not been tested on
 Windows**. There is no installer, Windows service, bundled Python, tray
 app or first-run setup screen yet.
+
+## Excel export
+
+On a test's page, **Export Excel** downloads one `.xlsx` workbook for that
+test (`GET /api/tests/{test_id}/export.xlsx`, signed-in users, own
+institute only; admins and teachers alike). It is built in memory for the
+request and never stored. The file is named `<test name>_<test date>.xlsx`.
+
+Sheets: Test Summary, Student Results, Question Analysis, Chapter
+Analysis, Topic Analysis, Answer Matrix, Teacher Actions (with the
+observed next-test outcome and caveats) and Test Comparison (against the
+previous test of the same batch and subject, as on the dashboard).
+
+Every figure comes from the same calculations the dashboard uses; the
+export adds no scoring or ranking of its own. Notes for readers:
+
+- *Accuracy* is correct / attempted. *Correct %* is correct / all
+  responses (unattempted included). Percentages are real Excel
+  percentages; changes between tests are in percentage points.
+- Text is never treated as a formula: a value that starts with `=`, `+`,
+  `-`, `@` (or a tab or carriage return) is written with a leading
+  apostrophe so Excel keeps it as text. This also applies to student names
+  and notes.
+- A test with no questions or no imported answers still exports; the
+  affected sheets say why they are empty. Students with no answers rows
+  are not part of the analysis (as on the dashboard).
+- Sorting: students by roll number, questions by number, chapters and
+  topics by name.
 
 ## Production
 

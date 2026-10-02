@@ -120,6 +120,25 @@ select {
   font-weight: 650;
 }
 
+.hero-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.hero-side button:disabled {
+  cursor: progress;
+  opacity: 0.65;
+}
+
+.export-error {
+  max-width: 260px;
+  color: #a33b2a;
+  font-size: 13px;
+  text-align: right;
+}
+
 /* ---------- Stats ---------- */
 
 .stats-grid {

@@ -92,3 +92,40 @@ export async function apiFetch(
 
   return data;
 }
+
+// Download a file (for example an Excel export) with the session cookie.
+// Returns { blob, filename }. Failures throw ApiError with a short,
+// user-safe message; the server's response body is never shown.
+export async function apiDownload(path, { signal } = {}) {
+  const response = await fetch(path, {
+    method: "GET",
+    signal,
+    credentials: "same-origin",
+  });
+
+  if (response.status === 401 && unauthorizedHandler) {
+    unauthorizedHandler();
+  }
+
+  if (!response.ok) {
+    const messages = {
+      401: "Your session has ended. Please sign in again.",
+      403: "You do not have permission to export this test.",
+      404: "This test could not be found.",
+    };
+
+    throw new ApiError(
+      response.status,
+      messages[response.status] ||
+        "The Excel file could not be created. Please try again."
+    );
+  }
+
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const match = /filename="([^"]+)"/.exec(disposition);
+
+  return {
+    blob: await response.blob(),
+    filename: match ? match[1] : "test-export.xlsx",
+  };
+}
