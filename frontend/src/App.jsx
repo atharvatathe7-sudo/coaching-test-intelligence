@@ -575,6 +575,11 @@ function App() {
   const difficultQuestions =
     batch?.difficult_questions || [];
 
+  const questionCount = (batch?.chapters || []).reduce(
+    (total, chapter) => total + (chapter.questions || 0),
+    0
+  );
+
   if (investigation) {
     return (
       <div className="app-shell">
@@ -740,7 +745,7 @@ function App() {
               <StatCard
                 label="Questions"
                 value={
-                  batch?.question_count ?? "—"
+                  batch?.chapters ? questionCount : "—"
                 }
                 subtext="in this test"
               />
@@ -922,7 +927,7 @@ function App() {
                     </div>
 
                     <div className="topic-meta">
-                      {topic.question_count}{" "}
+                      {topic.questions}{" "}
                       questions
                     </div>
                   </div>
