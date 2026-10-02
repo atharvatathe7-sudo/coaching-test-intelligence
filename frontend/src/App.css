@@ -515,3 +515,71 @@ select {
     padding: 17px;
   }
 }
+
+/* Progress vs previous test */
+.progress-section {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.progress-note {
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 14px;
+}
+
+.mover-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.mover-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 14px;
+}
+
+.mover-title {
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.mover-item,
+.progress-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 14px;
+}
+
+.progress-name {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.progress-chapter {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.progress-values {
+  color: #475569;
+  white-space: nowrap;
+}
+
+.progress-change {
+  min-width: 110px;
+  text-align: right;
+  font-weight: 600;
+}
+
+.change-up { color: #15803d; }
+.change-down { color: #b91c1c; }
+.change-flat { color: #64748b; }
