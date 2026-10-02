@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import ActionOutcome from "./ActionOutcome";
+import AdminPage from "./AdminPage";
+import { apiFetch, isAbortError } from "./api";
 import ImportPage from "./ImportPage";
 import "./App.css";
-
-const API = "";
 
 function StatCard({ label, value, subtext }) {
   return (
@@ -378,7 +378,7 @@ function actionLabel(value) {
   return match ? match[1] : value;
 }
 
-function ActionTracker({ item, testId, actions, outcomes, onSaved }) {
+function ActionTracker({ item, testId, actions, outcomes, user, onSaved }) {
   const [actionType, setActionType] = useState("review");
   const [status, setStatus] = useState("planned");
   const [note, setNote] = useState("");
@@ -392,10 +392,9 @@ function ActionTracker({ item, testId, actions, outcomes, onSaved }) {
       setSaving(true);
       setError("");
 
-      const response = await fetch(`${API}/api/actions`, {
+      const saved = await apiFetch("/api/actions", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        json: {
           test_id: testId,
           question_number: evidence.question_number ?? null,
           chapter_id: evidence.chapter_id ?? null,
@@ -406,12 +405,10 @@ function ActionTracker({ item, testId, actions, outcomes, onSaved }) {
           action_type: actionType,
           status,
           note: note.trim() || null,
-        }),
+        },
       });
 
-      if (!response.ok) throw new Error("Save failed.");
-
-      onSaved(await response.json());
+      onSaved(saved);
       setNote("");
     } catch {
       setError("Could not save the action.");
@@ -424,18 +421,12 @@ function ActionTracker({ item, testId, actions, outcomes, onSaved }) {
     try {
       setError("");
 
-      const response = await fetch(
-        `${API}/api/actions/${action.id}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "completed" }),
-        }
-      );
+      const updated = await apiFetch(`/api/actions/${action.id}`, {
+        method: "PATCH",
+        json: { status: "completed" },
+      });
 
-      if (!response.ok) throw new Error("Update failed.");
-
-      onSaved(await response.json());
+      onSaved(updated);
     } catch {
       setError("Could not update the action.");
     }
@@ -450,7 +441,9 @@ function ActionTracker({ item, testId, actions, outcomes, onSaved }) {
             <span className={`action-status ${action.status}`}>
               {action.status}
             </span>
-            {action.status === "planned" && (
+            {action.status === "planned" &&
+              (user.role === "admin" ||
+                action.created_by_user_id === user.id) && (
               <button
                 className="action-link"
                 onClick={() => markCompleted(action)}
@@ -518,7 +511,7 @@ function ActionTracker({ item, testId, actions, outcomes, onSaved }) {
   );
 }
 
-function App() {
+function App({ user, onLogout }) {
   const [tests, setTests] = useState([]);
   const [selectedTest, setSelectedTest] = useState(null);
   const [batch, setBatch] = useState(null);
@@ -527,9 +520,13 @@ function App() {
 
   const [teacherActions, setTeacherActions] = useState([]);
   const [actionOutcomes, setActionOutcomes] = useState({});
-  const [progress, setProgress] = useState(null);
-  const [progressLoading, setProgressLoading] = useState(false);
-  const [progressError, setProgressError] = useState("");
+  // Progress result tagged with the test pair it belongs to, so a result
+  // for a previous selection is never shown (no reset needed on change).
+  const [progressResult, setProgressResult] = useState({
+    key: null,
+    data: null,
+    error: "",
+  });
 
   const [investigation, setInvestigation] = useState(null);
   const [investigationLoading, setInvestigationLoading] = useState(false);
@@ -540,38 +537,35 @@ function App() {
   const [view, setView] = useState("dashboard");
   const [testsVersion, setTestsVersion] = useState(0);
   const preferredTestId = useRef(null);
+  const outcomesRequest = useRef(null);
 
   // Outcomes are extra information: failures must never affect actions.
+  // A newer request cancels an older one so stale outcomes never land.
   async function loadOutcomes(testId) {
+    outcomesRequest.current?.abort();
+    const controller = new AbortController();
+    outcomesRequest.current = controller;
+
     try {
-      const response = await fetch(
-        `${API}/api/tests/${testId}/actions/outcomes`
+      const data = await apiFetch(
+        `/api/tests/${testId}/actions/outcomes`,
+        { signal: controller.signal }
       );
-
-      if (!response.ok) throw new Error("Outcome request failed.");
-
-      const data = await response.json();
 
       setActionOutcomes(
         Object.fromEntries(
           data.outcomes.map((outcome) => [outcome.action.id, outcome])
         )
       );
-    } catch {
-      setActionOutcomes({});
+    } catch (err) {
+      if (!isAbortError(err)) setActionOutcomes({});
     }
   }
 
   useEffect(() => {
     async function loadTests() {
       try {
-        const response = await fetch(`${API}/api/tests`);
-
-        if (!response.ok) {
-          throw new Error("Could not load tests.");
-        }
-
-        const data = await response.json();
+        const data = await apiFetch("/api/tests");
 
         setTests(data.tests || []);
 
@@ -597,44 +591,28 @@ function App() {
   useEffect(() => {
     if (!selectedTest) return;
 
+    // Switching tests aborts the previous test's requests, so a slow
+    // response for the old test can never overwrite the new one.
+    const controller = new AbortController();
+    const { signal } = controller;
+
     async function loadAnalytics() {
       try {
         setLoading(true);
         setError("");
         setInvestigation(null);
 
-        const [
-          batchResponse,
-          chapterResponse,
-          actionResponse,
-        ] = await Promise.all([
-          fetch(
-            `${API}/api/tests/${selectedTest.id}/analytics/batch`
+        const [batchData, chapterData, actionData] = await Promise.all([
+          apiFetch(`/api/tests/${selectedTest.id}/analytics/batch`, {
+            signal,
+          }),
+          apiFetch(
+            `/api/tests/${selectedTest.id}/analytics/chapters-topics`,
+            { signal }
           ),
-          fetch(
-            `${API}/api/tests/${selectedTest.id}/analytics/chapters-topics`
-          ),
-          fetch(
-            `${API}/api/tests/${selectedTest.id}/action-report`
-          ),
-        ]);
-
-        if (
-          !batchResponse.ok ||
-          !chapterResponse.ok ||
-          !actionResponse.ok
-        ) {
-          throw new Error("Analytics request failed.");
-        }
-
-        const [
-          batchData,
-          chapterData,
-          actionData,
-        ] = await Promise.all([
-          batchResponse.json(),
-          chapterResponse.json(),
-          actionResponse.json(),
+          apiFetch(`/api/tests/${selectedTest.id}/action-report`, {
+            signal,
+          }),
         ]);
 
         setBatch(batchData);
@@ -642,28 +620,28 @@ function App() {
         setActionReport(actionData);
 
         try {
-          const actionsResponse = await fetch(
-            `${API}/api/tests/${selectedTest.id}/actions`
+          const actionsData = await apiFetch(
+            `/api/tests/${selectedTest.id}/actions`,
+            { signal }
           );
-
-          setTeacherActions(
-            actionsResponse.ok
-              ? (await actionsResponse.json()).actions
-              : []
-          );
-        } catch {
+          setTeacherActions(actionsData.actions);
+        } catch (err) {
+          if (isAbortError(err)) throw err;
           setTeacherActions([]);
         }
 
         loadOutcomes(selectedTest.id);
-      } catch {
+        setLoading(false);
+      } catch (err) {
+        if (isAbortError(err)) return;
         setError("Could not load test analytics.");
-      } finally {
         setLoading(false);
       }
     }
 
     loadAnalytics();
+
+    return () => controller.abort();
   }, [selectedTest]);
 
   // Latest earlier test for the same batch and subject.
@@ -690,44 +668,39 @@ function App() {
   const previousTestId = previousTest?.id;
   const selectedTestId = selectedTest?.id;
 
+  const progressKey =
+    selectedTestId && previousTestId
+      ? `${previousTestId}:${selectedTestId}`
+      : null;
+
   useEffect(() => {
-    setProgress(null);
-    setProgressError("");
+    if (!progressKey) return;
 
-    if (!selectedTestId || !previousTestId) return;
+    const controller = new AbortController();
 
-    let cancelled = false;
+    apiFetch(`/api/tests/${previousTestId}/compare/${selectedTestId}`, {
+      signal: controller.signal,
+    })
+      .then((data) =>
+        setProgressResult({ key: progressKey, data, error: "" })
+      )
+      .catch((err) => {
+        if (isAbortError(err)) return;
+        setProgressResult({
+          key: progressKey,
+          data: null,
+          error: "Could not load progress comparison.",
+        });
+      });
 
-    async function loadProgress() {
-      try {
-        setProgressLoading(true);
+    return () => controller.abort();
+  }, [progressKey, previousTestId, selectedTestId]);
 
-        const response = await fetch(
-          `${API}/api/tests/${previousTestId}/compare/${selectedTestId}`
-        );
-
-        if (!response.ok) {
-          throw new Error("Progress request failed.");
-        }
-
-        const data = await response.json();
-
-        if (!cancelled) setProgress(data);
-      } catch {
-        if (!cancelled) {
-          setProgressError("Could not load progress comparison.");
-        }
-      } finally {
-        if (!cancelled) setProgressLoading(false);
-      }
-    }
-
-    loadProgress();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedTestId, previousTestId]);
+  const currentProgress =
+    progressResult.key === progressKey ? progressResult : null;
+  const progress = currentProgress?.data ?? null;
+  const progressError = currentProgress?.error ?? "";
+  const progressLoading = Boolean(progressKey) && !currentProgress;
 
   async function openInvestigation(item) {
     const questionNumber =
@@ -741,17 +714,9 @@ function App() {
       setInvestigationLoading(true);
       setError("");
 
-      const response = await fetch(
-        `${API}/api/tests/${selectedTest.id}/questions/${questionNumber}/investigation`
+      const data = await apiFetch(
+        `/api/tests/${selectedTest.id}/questions/${questionNumber}/investigation`
       );
-
-      if (!response.ok) {
-        throw new Error(
-          "Could not load question investigation."
-        );
-      }
-
-      const data = await response.json();
 
       setInvestigation(data);
     } catch {
@@ -792,15 +757,22 @@ function App() {
     0
   );
 
-  if (view === "import") {
+  // UI hiding is a convenience only; the server enforces every role check.
+  const isAdmin = user.role === "admin";
+
+  function returnToDashboard(testId) {
+    preferredTestId.current = testId ?? null;
+    setTestsVersion((version) => version + 1);
+    setView("dashboard");
+  }
+
+  if (view === "admin" && isAdmin) {
+    return <AdminPage onClose={returnToDashboard} user={user} />;
+  }
+
+  if (view === "import" && isAdmin) {
     return (
-      <ImportPage
-        onClose={(testId) => {
-          preferredTestId.current = testId ?? null;
-          setTestsVersion((version) => version + 1);
-          setView("dashboard");
-        }}
-      />
+      <ImportPage onClose={returnToDashboard} />
     );
   }
 
@@ -899,13 +871,37 @@ function App() {
             </select>
           </div>
 
-          <button
-            className="import-button"
-            onClick={() => setView("import")}
-            type="button"
-          >
-            Import data
-          </button>
+          {isAdmin && (
+            <>
+              <button
+                className="import-button"
+                onClick={() => setView("import")}
+                type="button"
+              >
+                Import data
+              </button>
+              <button
+                className="import-button"
+                onClick={() => setView("admin")}
+                type="button"
+              >
+                Admin
+              </button>
+            </>
+          )}
+
+          <div className="user-chip">
+            <span>
+              {user.name} · {user.role}
+            </span>
+            <button
+              className="import-button"
+              onClick={onLogout}
+              type="button"
+            >
+              Sign out
+            </button>
+          </div>
         </div>
       </header>
 
@@ -1058,6 +1054,7 @@ function App() {
                         )}
                         item={item}
                         outcomes={actionOutcomes}
+                        user={user}
                         onSaved={recordAction}
                         testId={selectedTest.id}
                       />

@@ -1,0 +1,14 @@
+[Unit]
+Description=Coaching Test Intelligence nightly backup
+
+[Service]
+Type=oneshot
+User=coaching
+Group=coaching
+WorkingDirectory=/opt/coaching
+EnvironmentFile=/etc/coaching/coaching.env
+UMask=0077
+ExecStart=/opt/coaching/.venv/bin/python scripts/backup.py create --kind nightly
+ExecStartPost=/opt/coaching/.venv/bin/python scripts/backup.py prune
+# Copy the encrypted/off-machine copy here if configured, e.g.
+# ExecStartPost=/usr/local/bin/coaching-offsite-sync

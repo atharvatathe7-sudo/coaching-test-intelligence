@@ -122,6 +122,7 @@ def evaluate_test(
 
         result = TestResult(
             test_id=test_id,
+            batch_id=test.batch_id,
             student_id=student_id,
             correct_count=correct_count,
             wrong_count=wrong_count,

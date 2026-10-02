@@ -6,6 +6,8 @@ const CAVEATS = {
     "The action was recorded after that test's date.",
   action_still_planned: "The action is still planned.",
   marking_scheme_differs: "Marking scheme differs between the tests.",
+  test_reevaluated_after_action:
+    "This test's answer key or answers were corrected after the action was recorded; the finding shown at that time may differ.",
 };
 
 const SKIP_REASONS = {

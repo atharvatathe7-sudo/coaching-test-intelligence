@@ -96,6 +96,22 @@ Important files:
 - `backend/app/database/models.py`
 - `backend/app/schemas/api.py`
 
+Security and operations (Milestone 4):
+
+- `backend/app/security/` — server-side sessions, Argon2id passwords,
+  CSRF header check, request-size limits, and `access.py`: the single
+  place that checks an object belongs to the user's institute.
+- `backend/alembic/` — migrations. The schema is only ever created or
+  changed with `alembic upgrade head`; never with `create_all`.
+- `backend/app/ops/backup.py`, `scripts/backup.py` — backups and
+  restore verification. `docs/OPERATIONS.md` — deployment and pilot checklist.
+- Every route except `/`, `/api/health` and `POST /api/auth/login`
+  requires a signed-in user; admin-only routes use `require_admin`.
+  New routes must keep this (the route-guard tests enforce it).
+- Corrections and imports write `audit_log` entries in the same
+  transaction; audit details never contain student names, roll numbers,
+  answers or passwords.
+
 Business logic:
 
 - `backend/app/services/evaluation.py`
@@ -281,15 +297,11 @@ These values can be used to validate the implementation.
 
 ---
 
-## Current Known Issue
+## Demo sign-in
 
-The latest Test-to-Test Progress frontend changes previously resulted in a completely white/blank browser screen.
-
-This must be diagnosed and fixed before implementing additional product features.
-
-Do not assume the cause.
-
-Inspect the actual code and runtime/build errors.
+Demo databases (`alembic upgrade head`, then `scripts/seed_demo.py`,
+`scripts/create_test_02.py`) have `admin@demo.local` and
+`teacher@demo.local`, password `demo-password`.
 
 ---
 

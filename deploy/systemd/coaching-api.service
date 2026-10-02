@@ -1,0 +1,31 @@
+[Unit]
+Description=Coaching Test Intelligence API
+After=network.target
+
+[Service]
+Type=simple
+User=coaching
+Group=coaching
+WorkingDirectory=/opt/coaching
+# Mode 0600, owned by root: see docs/OPERATIONS.md.
+EnvironmentFile=/etc/coaching/coaching.env
+# One worker: SQLite has a single writer. No --reload in production.
+# The app refuses to start if migrations are not applied or the backup
+# directory is missing.
+ExecStart=/opt/coaching/.venv/bin/python -m uvicorn backend.app.main:app \
+    --host 127.0.0.1 --port 8000 --workers 1 \
+    --proxy-headers --forwarded-allow-ips 127.0.0.1 \
+    --no-server-header
+Restart=on-failure
+RestartSec=5
+
+# Hardening: the service can only write its database and backups.
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/coaching /var/backups/coaching
+
+[Install]
+WantedBy=multi-user.target

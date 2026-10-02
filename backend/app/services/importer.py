@@ -12,6 +12,12 @@ everything back, so an import is never left half-done.
 
 Rows are matched by natural identifiers (roll number, question number,
 normalized chapter/topic name), never by database IDs.
+
+Ownership is decided by the caller (security.access): these functions
+receive the batch/test already resolved for the signed-in user's
+institute, or None when it does not exist or belongs to another
+institute (reported as "not found"). Chapter/topic matching is limited
+to the batch's institute.
 """
 
 import logging
@@ -23,6 +29,7 @@ from sqlalchemy.orm import Session
 
 from ..database.models import (
     Batch,
+    User,
     Chapter,
     Question,
     Student,
@@ -31,6 +38,8 @@ from ..database.models import (
     TestResult,
     Topic,
 )
+from . import audit
+from ..ops.backup import BackupError, pre_operation_backup
 from .evaluation import evaluate_test
 from .import_csv import (
     ANSWER_OPTIONS,
@@ -78,6 +87,16 @@ def _commit_failed(report: ImportReport, file: str, exc: Exception) -> None:
         message = "An unexpected error occurred. Nothing was imported."
 
     report.error(file, message)
+
+
+def _safety_backup(report: ImportReport, file: str, reason: str) -> bool:
+    """Back up before replacing data; on failure, report and stop."""
+    try:
+        pre_operation_backup(reason)
+    except BackupError as exc:
+        report.error(file, f"{exc} Nothing was changed.")
+        return False
+    return True
 
 
 def _parse_question_number(value: str) -> int | None:
@@ -163,12 +182,15 @@ def validate_roster_rows(
 
 def import_roster(
     db: Session,
-    batch_id: int,
+    batch: Batch | None,
     raw: bytes,
     dry_run: bool = True,
+    *,
+    requested_batch_id: int | None = None,
+    actor: User | None = None,
 ) -> dict:
     report = ImportReport()
-    batch = db.get(Batch, batch_id)
+    batch_id = batch.id if batch is not None else requested_batch_id
 
     if batch is None:
         report.error(
@@ -206,6 +228,11 @@ def import_roster(
             )
             for item in to_create
         )
+        if actor is not None:
+            audit.record(
+                db, actor, "imports.roster", "batch", batch_id,
+                {"rows": len(rows), "students_created": len(to_create)},
+            )
         db.commit()
     except Exception as exc:
         db.rollback()
@@ -248,7 +275,8 @@ def _validate_marks(report: ImportReport, field: str, value) -> float | None:
 
 def validate_test_metadata(
     db: Session,
-    batch_id: int,
+    batch: Batch | None,
+    requested_batch_id: int | None,
     test_name: str,
     subject: str,
     test_date: str,
@@ -261,7 +289,7 @@ def validate_test_metadata(
 
     before = len(report.errors)
 
-    batch = db.get(Batch, batch_id)
+    batch_id = batch.id if batch is not None else requested_batch_id
 
     if batch is None:
         report.error(
@@ -472,10 +500,37 @@ def plan_chapters_topics(
     return new_chapters, new_topics
 
 
+def institute_chapters(
+    db: Session, institute_id: int | None
+) -> dict[tuple[str, str], int]:
+    """(normalized subject, normalized name) -> chapter id."""
+    if institute_id is None:
+        return {}
+    return {
+        (normalize_name(c.subject), normalize_name(c.name)): c.id
+        for c in db.query(Chapter).filter(Chapter.institute_id == institute_id)
+    }
+
+
+def institute_topics(
+    db: Session, institute_id: int | None
+) -> dict[tuple[int, str], int]:
+    """(chapter id, normalized topic name) -> topic id."""
+    if institute_id is None:
+        return {}
+    return {
+        (t.chapter_id, normalize_name(t.name)): t.id
+        for t in db.query(Topic)
+        .join(Chapter, Chapter.id == Topic.chapter_id)
+        .filter(Chapter.institute_id == institute_id)
+    }
+
+
 def import_test_setup(
     db: Session,
     *,
-    batch_id: int,
+    batch: Batch | None,
+    requested_batch_id: int | None = None,
     test_name: str,
     subject: str,
     test_date: str,
@@ -485,11 +540,12 @@ def import_test_setup(
     raw: bytes,
     dry_run: bool = True,
     confirm_new_chapters_topics: bool = False,
+    actor: User | None = None,
 ) -> dict:
     report = ImportReport()
 
     meta = validate_test_metadata(
-        db, batch_id, test_name, subject, test_date,
+        db, batch, requested_batch_id, test_name, subject, test_date,
         marks_correct, marks_wrong, marks_blank, report,
     )
 
@@ -515,13 +571,10 @@ def import_test_setup(
 
     subject_clean = clean_text(subject)
 
-    existing_chapters = {
-        (normalize_name(c.subject), normalize_name(c.name)): c.id
-        for c in db.query(Chapter)
-    }
-    existing_topics = {
-        (t.chapter_id, normalize_name(t.name)) for t in db.query(Topic)
-    }
+    # Only this institute's syllabus is searched.
+    institute_id = batch.institute_id if batch is not None else None
+    existing_chapters = institute_chapters(db, institute_id)
+    existing_topics = set(institute_topics(db, institute_id))
 
     new_chapters, new_topics = plan_chapters_topics(
         questions,
@@ -573,17 +626,16 @@ def import_test_setup(
         subject_key = normalize_name(subject_clean)
 
         for chapter_key, info in new_chapters.items():
-            chapter = Chapter(subject=subject_clean, name=info["name"])
+            chapter = Chapter(
+                institute_id=institute_id,
+                subject=subject_clean,
+                name=info["name"],
+            )
             db.add(chapter)
             db.flush()
             chapter_ids[(subject_key, chapter_key)] = chapter.id
 
-        topic_ids = {}
-
-        for topic in db.query(Topic):
-            topic_ids[(topic.chapter_id, normalize_name(topic.name))] = (
-                topic.id
-            )
+        topic_ids = institute_topics(db, institute_id)
 
         for (chapter_key, topic_key), info in new_topics.items():
             chapter_id = chapter_ids[(subject_key, chapter_key)]
@@ -610,6 +662,16 @@ def import_test_setup(
                 )
             )
 
+        if actor is not None:
+            audit.record(
+                db, actor, "imports.test_setup", "test", test.id,
+                {
+                    "batch_id": meta["batch_id"],
+                    "questions": len(questions),
+                    "new_chapters": len(new_chapters),
+                    "new_topics": len(new_topics),
+                },
+            )
         db.commit()
         test_id = test.id
     except Exception as exc:
@@ -748,13 +810,16 @@ def validate_answer_rows(
 
 def import_answers(
     db: Session,
-    test_id: int,
+    test: Test | None,
     raw: bytes,
     replace: bool = False,
     dry_run: bool = True,
+    *,
+    requested_test_id: int | None = None,
+    actor: User | None = None,
 ) -> dict:
     report = ImportReport()
-    test = db.get(Test, test_id)
+    test_id = test.id if test is not None else requested_test_id
 
     if test is None:
         report.error(
@@ -824,6 +889,9 @@ def import_answers(
     if report.has_errors or dry_run:
         return _finish(report, dry_run, committed=False)
 
+    if existing_rows and replace and not _safety_backup(report, ANSWERS_FILE, "replace-answers"):
+        return _finish(report, dry_run, committed=False)
+
     try:
         if replace:
             db.query(StudentAnswer).filter(
@@ -837,6 +905,7 @@ def import_answers(
         db.add_all(
             StudentAnswer(
                 test_id=test_id,
+                batch_id=test.batch_id,
                 student_id=student_id,
                 question_id=question_id,
                 answer=answer,
@@ -847,6 +916,20 @@ def import_answers(
 
         results = evaluate_test(db, test_id, commit=False)
 
+        if actor is not None:
+            replacing = bool(existing_rows and replace)
+            audit.record(
+                db, actor,
+                "answers.replace" if replacing else "answers.import",
+                "test", test_id,
+                {
+                    "rows": len(rows),
+                    "answer_records": len(records),
+                    "replaced_answer_records": existing_rows if replacing else 0,
+                    "students_evaluated": len(results),
+                },
+            )
+
         db.commit()
     except Exception as exc:
         db.rollback()
@@ -854,5 +937,260 @@ def import_answers(
         return _finish(report, dry_run, committed=False)
 
     report.summary["students_evaluated"] = len(results)
+
+    return _finish(report, dry_run, committed=True)
+
+
+# -------------------------------------------------------------------
+# Answer-key correction
+# -------------------------------------------------------------------
+
+ANSWER_KEY_FILE = "answer_key.csv"
+
+
+def correct_answer_key(
+    db: Session,
+    test: Test | None,
+    raw: bytes,
+    dry_run: bool = True,
+    confirm_new_chapters_topics: bool = False,
+    *,
+    requested_test_id: int | None = None,
+    actor: User | None = None,
+) -> dict:
+    """
+    Correct an existing test's answer key and chapter/topic mapping.
+
+    The CSV has the test-setup columns and must list every question of
+    the test exactly once. Questions are updated in place (never deleted),
+    so student answers and teacher actions stay attached to them. When
+    answers exist the test is re-evaluated in the same transaction, and
+    the change is audited with a before/after diff of the key.
+    """
+
+    report = ImportReport()
+    test_id = test.id if test is not None else requested_test_id
+
+    if test is None:
+        report.error(
+            ANSWER_KEY_FILE, "Test not found.",
+            field="test_id", value=test_id,
+        )
+
+    rows = parse_csv(raw, ANSWER_KEY_FILE, TEST_SETUP_COLUMNS, report)
+    items = validate_question_rows(rows, report)
+
+    # validate_question_rows reports against the test-setup file name.
+    for entry in report.errors + report.warnings:
+        if entry["file"] == TEST_SETUP_FILE:
+            entry["file"] = ANSWER_KEY_FILE
+
+    if not rows and not report.has_errors:
+        report.error(ANSWER_KEY_FILE, "File has no question rows.")
+
+    if test is None:
+        return _finish(report, dry_run, committed=False)
+
+    batch = db.get(Batch, test.batch_id)
+    institute_id = batch.institute_id
+
+    questions = {
+        q.question_number: q
+        for q in db.query(Question).filter(Question.test_id == test.id)
+    }
+
+    # Exact coverage: every existing question, and nothing else.
+    for item in items:
+        if item["question_number"] not in questions:
+            report.error(
+                ANSWER_KEY_FILE,
+                "Question number is not in this test.",
+                row=item["row"], field="question_number",
+                value=item["question_number"],
+            )
+
+    listed = {item["question_number"] for item in items}
+    missing = sorted(set(questions) - listed)
+
+    if missing and rows:
+        report.error(
+            ANSWER_KEY_FILE,
+            f"The file must list every question of the test; missing "
+            f"{len(missing)}: "
+            + ", ".join(f"Q{n}" for n in missing[:20])
+            + ("…" if len(missing) > 20 else "")
+            + ".",
+            field="question_number",
+        )
+
+    existing_chapters = institute_chapters(db, institute_id)
+    existing_topics = institute_topics(db, institute_id)
+
+    new_chapters, new_topics = plan_chapters_topics(
+        items, test.subject, existing_chapters, set(existing_topics), report,
+    )
+    for entry in report.warnings:
+        if entry["file"] == TEST_SETUP_FILE:
+            entry["file"] = ANSWER_KEY_FILE
+
+    chapters_by_id = {
+        c.id: c
+        for c in db.query(Chapter).filter(Chapter.institute_id == institute_id)
+    }
+    topics_by_id = {
+        t.id: t
+        for t in db.query(Topic).filter(
+            Topic.chapter_id.in_(list(chapters_by_id) or [0])
+        )
+    }
+
+    key_changes = []
+    mapping_changes = []
+
+    for item in items:
+        question = questions.get(item["question_number"])
+
+        if question is None:
+            continue
+
+        if question.correct_answer != item["correct_answer"]:
+            key_changes.append(
+                {
+                    "question_number": question.question_number,
+                    "from": question.correct_answer,
+                    "to": item["correct_answer"],
+                }
+            )
+
+        old_chapter = chapters_by_id.get(question.chapter_id)
+        old_topic = topics_by_id.get(question.topic_id)
+
+        if (
+            old_chapter is None
+            or old_topic is None
+            or normalize_name(old_chapter.name) != normalize_name(item["chapter"])
+            or normalize_name(old_topic.name) != normalize_name(item["topic"])
+        ):
+            mapping_changes.append(
+                {
+                    "question_number": question.question_number,
+                    "chapter_from": old_chapter.name if old_chapter else None,
+                    "chapter_to": item["chapter"],
+                    "topic_from": old_topic.name if old_topic else None,
+                    "topic_to": item["topic"],
+                }
+            )
+
+    key_changes.sort(key=lambda c: c["question_number"])
+    mapping_changes.sort(key=lambda c: c["question_number"])
+
+    answers_present = (
+        db.query(StudentAnswer.id)
+        .filter(StudentAnswer.test_id == test.id)
+        .first()
+        is not None
+    )
+    needs_confirmation = bool(new_chapters or new_topics)
+    changed = bool(key_changes or mapping_changes)
+
+    report.summary = {
+        "test_id": test.id,
+        "questions": len(questions),
+        "key_changes": key_changes,
+        "mapping_changes": mapping_changes,
+        "changed_questions": len(
+            {c["question_number"] for c in key_changes + mapping_changes}
+        ),
+        "new_chapters": len(new_chapters),
+        "new_topics": len(new_topics),
+        "requires_confirmation": needs_confirmation,
+        "will_reevaluate": answers_present and bool(key_changes),
+    }
+
+    if not changed and not report.has_errors:
+        report.warning(
+            ANSWER_KEY_FILE,
+            "The file matches the current answer key and mapping; "
+            "there is nothing to change.",
+        )
+
+    if (
+        not dry_run
+        and needs_confirmation
+        and not confirm_new_chapters_topics
+        and not report.has_errors
+    ):
+        report.error(
+            ANSWER_KEY_FILE,
+            f"{len(new_chapters)} new chapters and {len(new_topics)} new "
+            "topics would be created. Confirm to proceed.",
+            field="confirm_new_chapters_topics",
+        )
+
+    if report.has_errors or dry_run or not changed:
+        return _finish(report, dry_run, committed=False)
+
+    if not _safety_backup(report, ANSWER_KEY_FILE, "answer-key"):
+        return _finish(report, dry_run, committed=False)
+
+    try:
+        subject_key = normalize_name(test.subject)
+        chapter_ids = dict(existing_chapters)
+
+        for chapter_key, info in new_chapters.items():
+            chapter = Chapter(
+                institute_id=institute_id,
+                subject=clean_text(test.subject),
+                name=info["name"],
+            )
+            db.add(chapter)
+            db.flush()
+            chapter_ids[(subject_key, chapter_key)] = chapter.id
+
+        topic_ids = dict(existing_topics)
+
+        for (chapter_key, topic_key), info in new_topics.items():
+            chapter_id = chapter_ids[(subject_key, chapter_key)]
+            topic = Topic(chapter_id=chapter_id, name=info["name"])
+            db.add(topic)
+            db.flush()
+            topic_ids[(chapter_id, topic_key)] = topic.id
+
+        for item in items:
+            question = questions[item["question_number"]]
+            chapter_id = chapter_ids[
+                (subject_key, normalize_name(item["chapter"]))
+            ]
+            question.correct_answer = item["correct_answer"]
+            question.chapter_id = chapter_id
+            question.topic_id = topic_ids[
+                (chapter_id, normalize_name(item["topic"]))
+            ]
+
+        db.flush()
+
+        evaluated = 0
+        if answers_present:
+            evaluated = len(evaluate_test(db, test.id, commit=False))
+
+        if actor is not None:
+            audit.record(
+                db, actor, "answer_key.correct", "test", test.id,
+                {
+                    "key_changes": key_changes,
+                    "mapping_changes": mapping_changes,
+                    "new_chapters": len(new_chapters),
+                    "new_topics": len(new_topics),
+                    "students_reevaluated": evaluated,
+                },
+            )
+
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        _commit_failed(report, ANSWER_KEY_FILE, exc)
+        return _finish(report, dry_run, committed=False)
+
+    report.summary["students_reevaluated"] = evaluated
 
     return _finish(report, dry_run, committed=True)

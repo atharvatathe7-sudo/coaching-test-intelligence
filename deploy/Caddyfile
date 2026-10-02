@@ -1,0 +1,45 @@
+# Caddy: HTTPS (automatic certificates), the built frontend, and /api
+# proxied to the single uvicorn process on 127.0.0.1:8000.
+# The frontend and the API share one origin, so cookies work and CORS is
+# not needed.
+#
+# Install as /etc/caddy/Caddyfile and set COACHING_DOMAIN in Caddy's
+# environment (or replace {$COACHING_DOMAIN} with the hostname).
+
+{$COACHING_DOMAIN} {
+	encode gzip
+
+	# Same limit as the application (10 MB CSV + form overhead); larger
+	# bodies are refused here before they reach Python.
+	request_body {
+		max_size 11MB
+	}
+
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	handle {
+		root * /opt/coaching/frontend/dist
+		try_files {path} /index.html
+		file_server
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+
+	# Access log: method, path, status, timing. Request bodies are never
+	# logged.
+	log {
+		output file /var/log/caddy/coaching-access.log {
+			roll_size 50MiB
+			roll_keep 10
+		}
+		format json
+	}
+}

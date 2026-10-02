@@ -187,3 +187,155 @@
   font-weight: 600;
   cursor: pointer;
 }
+
+/* ---------- Admin / auth ---------- */
+
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #6c7688;
+  font-size: 13px;
+}
+
+.admin-table {
+  width: 100%;
+  margin-bottom: 14px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.admin-table th,
+.admin-table td {
+  padding: 8px 6px;
+  border-bottom: 1px solid #edf0f4;
+  text-align: left;
+}
+
+.admin-row-actions {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.admin-row-actions button + button {
+  margin-left: 6px;
+}
+
+.admin-subtitle {
+  margin: 18px 0 10px;
+  font-size: 14px;
+}
+
+.import-page input[type="password"],
+.import-page input[type="email"],
+.import-page input[type="number"] {
+  padding: 9px 12px;
+  border: 1px solid #dce2eb;
+  border-radius: 9px;
+  font: inherit;
+}
+
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f4f6fa;
+  color: #172033;
+}
+
+.login-card {
+  width: min(380px, calc(100vw - 32px));
+  padding: 28px;
+  background: #ffffff;
+  border: 1px solid #e6eaf0;
+  border-radius: 14px;
+  text-align: left;
+}
+
+.login-card .brand-subtitle {
+  margin-bottom: 18px;
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 14px;
+  color: #6c7688;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.login-field input {
+  padding: 10px 12px;
+  border: 1px solid #dce2eb;
+  border-radius: 9px;
+  font: inherit;
+}
+
+.login-submit {
+  width: 100%;
+  padding: 10px 14px;
+  background: #1f2a44;
+  border: 0;
+  border-radius: 9px;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.login-submit:disabled {
+  opacity: 0.6;
+}
+
+.login-error,
+.login-notice {
+  margin-bottom: 12px;
+  padding: 9px 12px;
+  border-radius: 9px;
+  font-size: 13px;
+}
+
+.login-error {
+  background: #fff7f5;
+  color: #c84c38;
+}
+
+.login-notice {
+  background: #fff7df;
+  color: #6b4a00;
+}
+
+.admin-block {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid #edf0f4;
+}
+
+.key-changes {
+  margin: 10px 0;
+  padding: 10px 12px;
+  background: #f6f8fb;
+  border-radius: 9px;
+  font-size: 13px;
+}
+
+.key-changes ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.import-page button.danger {
+  border-color: #f0c2b9;
+  color: #c84c38;
+}
+
+.admin-table input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #dce2eb;
+  border-radius: 7px;
+  font: inherit;
+}

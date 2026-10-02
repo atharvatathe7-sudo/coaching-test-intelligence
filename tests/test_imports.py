@@ -25,9 +25,7 @@ _counter = itertools.count(1)
 
 def make_batch(client):
     name = f"Import Batch {next(_counter)}"
-    response = client.post(
-        "/api/batches", json={"institute_id": 1, "name": name}
-    )
+    response = client.post("/api/batches", json={"name": name})
     assert response.status_code == 200
     return response.json()["id"]
 
@@ -669,18 +667,19 @@ def test_large_import_with_late_error_writes_nothing(client, db):
 # Constraints
 # ------------------------------------------------------------------
 
-def test_duplicate_batch_and_test_are_rejected_by_api(client):
+def test_duplicate_batch_rejected_and_legacy_create_routes_removed(client):
     batch_id = make_batch(client)
     name = client.get("/api/batches").json()["batches"][-1]["name"]
 
-    response = client.post(
-        "/api/batches", json={"institute_id": 1, "name": name}
-    )
+    response = client.post("/api/batches", json={"name": name})
     assert response.status_code == 400
 
+    # Tests, questions and students are created only through the imports
+    # (Milestone 4B removed the unvalidated direct-create routes).
     body = {
         "batch_id": batch_id, "name": "Dup", "subject": "Physics",
         "test_date": "2026-01-01",
     }
-    assert client.post("/api/tests", json=body).status_code == 200
-    assert client.post("/api/tests", json=body).status_code == 400
+    assert client.post("/api/tests", json=body).status_code == 405
+    assert client.post("/api/questions", json={}).status_code in (404, 405)
+    assert client.post("/api/students", json={}).status_code == 405

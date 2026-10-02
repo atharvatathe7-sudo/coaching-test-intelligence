@@ -121,6 +121,7 @@ def create_test_02():
                 db.add(
                     StudentAnswer(
                         test_id=test_02.id,
+                        batch_id=test_02.batch_id,
                         student_id=student.id,
                         question_id=new_question.id,
                         answer=answer,

@@ -5,3 +5,8 @@ __pycache__/
 .venv/
 venv/
 .env
+*.db-wal
+*.db-shm
+*.partial
+*.env
+backups/

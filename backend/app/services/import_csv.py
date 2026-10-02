@@ -8,10 +8,14 @@ their CSV line numbers so validation messages can point at the row.
 import csv
 import io
 
+from .. import config
+
 # Allowed answer options (current application semantics).
 ANSWER_OPTIONS = ("A", "B", "C", "D")
 
-MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+# Second line of defence; the request itself is limited while it is
+# received (security/body_limit.py).
+MAX_UPLOAD_BYTES = config.MAX_UPLOAD_BYTES
 
 
 def clean_text(value: str | None) -> str:

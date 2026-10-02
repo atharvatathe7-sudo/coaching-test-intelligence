@@ -9,7 +9,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
-from backend.app.database.connection import Base, SessionLocal, engine
+from backend.app import config
+from backend.app.database.connection import SessionLocal, engine
+from backend.app.database.schema_check import require_current_schema
 from backend.app.database.models import (
     Batch,
     Chapter,
@@ -19,8 +21,17 @@ from backend.app.database.models import (
     StudentAnswer,
     Test,
     Topic,
+    User,
 )
+from backend.app.security.passwords import hash_password
 
+
+# Demo sign-in accounts (demo databases only; never seeded in production).
+DEMO_PASSWORD = "demo-password"
+DEMO_USERS = (
+    ("Demo Admin", "admin@demo.local", "admin"),
+    ("Demo Teacher", "teacher@demo.local", "teacher"),
+)
 
 # Fixed seed so every fresh demo database contains the same data.
 # This seed reproduces the Test 01 values documented in CLAUDE.md.
@@ -28,13 +39,26 @@ DEMO_SEED = 15173
 
 
 def create_demo_data(seed=DEMO_SEED):
+    if config.IS_PRODUCTION:
+        raise SystemExit(
+            "Refusing to seed demo data (and demo passwords) in production."
+        )
+
     random.seed(seed)
 
-    Base.metadata.create_all(bind=engine)
+    # The schema is created by migrations, never by this script:
+    #   alembic upgrade head
+    require_current_schema(engine)
 
     db = SessionLocal()
 
     try:
+        if db.query(Institute).first() is not None:
+            raise SystemExit(
+                "The database already contains data. Seed only a fresh "
+                "database (delete it, run `alembic upgrade head`, re-seed)."
+            )
+
         # ---------------------------------------------------------
         # 1. Institute
         # ---------------------------------------------------------
@@ -45,6 +69,18 @@ def create_demo_data(seed=DEMO_SEED):
 
         db.add(institute)
         db.flush()
+
+        for name, email, role in DEMO_USERS:
+            db.add(
+                User(
+                    institute_id=institute.id,
+                    name=name,
+                    email=email,
+                    password_hash=hash_password(DEMO_PASSWORD),
+                    role=role,
+                    is_active=True,
+                )
+            )
 
         # ---------------------------------------------------------
         # 2. Batch
@@ -129,6 +165,7 @@ def create_demo_data(seed=DEMO_SEED):
         for chapter_name, topic_names in chapter_topic_data.items():
 
             chapter = Chapter(
+                institute_id=institute.id,
                 subject="Physics",
                 name=chapter_name,
             )
@@ -227,6 +264,7 @@ def create_demo_data(seed=DEMO_SEED):
 
                 student_answer = StudentAnswer(
                     test_id=test.id,
+                    batch_id=test.batch_id,
                     student_id=student.id,
                     question_id=question.id,
                     answer=answer,
@@ -244,6 +282,11 @@ def create_demo_data(seed=DEMO_SEED):
         print(f"Students:  {len(students)}")
         print(f"Test:      {test.name}")
         print(f"Questions: {len(questions)}")
+        print(
+            "Sign in:   "
+            + ", ".join(email for _, email, _ in DEMO_USERS)
+            + f" (password: {DEMO_PASSWORD})"
+        )
         print("-----------------------------------")
         print("Database:", engine.url.database)
         print()

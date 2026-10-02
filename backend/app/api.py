@@ -1,3 +1,12 @@
+"""
+Main API routes.
+
+Every route here requires a signed-in user (router-level dependency).
+Objects named in the URL are loaded through security.access, which also
+checks they belong to the user's institute; handlers therefore only ever
+see authorized objects. Admin-only routes add require_admin.
+"""
+
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -6,108 +15,65 @@ from sqlalchemy.orm import Session
 
 from .database.connection import get_db
 from .database.models import (
-    Institute,
     Batch,
-    Student,
-    Test,
-    Question,
     Chapter,
-    Topic,
+    Question,
+    Student,
+    StudentAnswer,
     TeacherAction,
+    Test,
+    Topic,
+    User,
 )
 from .schemas.api import (
-    InstituteCreate,
     BatchCreate,
-    StudentCreate,
-    TestCreate,
-    QuestionCreate,
     TeacherActionCreate,
     TeacherActionUpdate,
 )
-from .services.evaluation import classify_answer, evaluate_test
-from .services.analytics import (
-    analyze_questions,
-    analyze_topics_and_chapters,
-    analyze_students,
-    analyze_batch,
-)
-from .services.action_report import generate_teacher_action_report
-from .services.progress import compare_tests
+from .security import access
+from .security.access import owned_action, owned_test, owned_test_pair
+from .security.dependencies import current_user, require_admin
+from .services import audit
 from .services.action_outcomes import get_action_outcomes
+from .services.action_report import generate_teacher_action_report
+from .services.analytics import (
+    analyze_batch,
+    analyze_questions,
+    analyze_students,
+    analyze_topics_and_chapters,
+)
+from .services.evaluation import classify_answer, evaluate_test
+from .services.progress import compare_tests
 
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api", dependencies=[Depends(current_user)])
 
 
-@router.get("/status")
-def api_status():
-    return {
-        "status": "ok",
-        "service": "Coaching Test Intelligence API",
-        "version": "0.1.0",
-    }
-
-
-# -------------------------------------------------------------------
-# Institutes
-# -------------------------------------------------------------------
-
-@router.post("/institutes")
-def create_institute(
-    payload: InstituteCreate,
-    db: Session = Depends(get_db),
-):
-    institute = Institute(name=payload.name)
-    db.add(institute)
-    db.commit()
-    db.refresh(institute)
-
-    return {
-        "id": institute.id,
-        "name": institute.name,
-    }
-
-
-@router.get("/institutes")
-def list_institutes(db: Session = Depends(get_db)):
-    institutes = db.query(Institute).order_by(Institute.id).all()
-
-    return {
-        "institutes": [
-            {
-                "id": institute.id,
-                "name": institute.name,
-            }
-            for institute in institutes
-        ]
-    }
+def _not_found_from(exc: ValueError):
+    return HTTPException(status_code=404, detail=str(exc))
 
 
 # -------------------------------------------------------------------
 # Batches
 # -------------------------------------------------------------------
 
-@router.post("/batches")
+@router.post("/batches", dependencies=[Depends(require_admin)])
 def create_batch(
     payload: BatchCreate,
+    user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    institute = db.get(Institute, payload.institute_id)
-
-    if institute is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Institute {payload.institute_id} not found.",
-        )
-
+    # The institute always comes from the signed-in user, never the client.
     batch = Batch(
-        institute_id=payload.institute_id,
-        name=payload.name,
+        institute_id=user.institute_id,
+        name=payload.name.strip(),
     )
 
     db.add(batch)
 
     try:
+        db.flush()
+        audit.record(db, user, "batch.create", "batch", batch.id, {})
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -126,8 +92,11 @@ def create_batch(
 
 
 @router.get("/batches")
-def list_batches(db: Session = Depends(get_db)):
-    batches = db.query(Batch).order_by(Batch.id).all()
+def list_batches(
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    batches = access.institute_batches(db, user).order_by(Batch.id).all()
 
     return {
         "batches": [
@@ -145,55 +114,22 @@ def list_batches(db: Session = Depends(get_db)):
 # Students
 # -------------------------------------------------------------------
 
-@router.post("/students")
-def create_student(
-    payload: StudentCreate,
-    db: Session = Depends(get_db),
-):
-    batch = db.get(Batch, payload.batch_id)
-
-    if batch is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Batch {payload.batch_id} not found.",
-        )
-
-    student = Student(
-        batch_id=payload.batch_id,
-        roll_number=payload.roll_number,
-        name=payload.name,
-    )
-
-    db.add(student)
-
-    try:
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise HTTPException(
-            status_code=400,
-            detail="Could not create student. Roll number may already exist in this batch.",
-        )
-
-    db.refresh(student)
-
-    return {
-        "id": student.id,
-        "batch_id": student.batch_id,
-        "roll_number": student.roll_number,
-        "name": student.name,
-    }
-
-
 @router.get("/students")
 def list_students(
     batch_id: int | None = None,
+    user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    query = db.query(Student)
-
     if batch_id is not None:
-        query = query.filter(Student.batch_id == batch_id)
+        if access.find_batch(db, user, batch_id) is None:
+            raise HTTPException(status_code=404, detail="Batch not found.")
+        query = db.query(Student).filter(Student.batch_id == batch_id)
+    else:
+        query = (
+            db.query(Student)
+            .join(Batch, Batch.id == Student.batch_id)
+            .filter(Batch.institute_id == user.institute_id)
+        )
 
     students = query.order_by(Student.id).all()
 
@@ -214,57 +150,12 @@ def list_students(
 # Tests
 # -------------------------------------------------------------------
 
-@router.post("/tests")
-def create_test(
-    payload: TestCreate,
+@router.get("/tests")
+def list_tests(
+    user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    batch = db.get(Batch, payload.batch_id)
-
-    if batch is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Batch {payload.batch_id} not found.",
-        )
-
-    test = Test(
-        batch_id=payload.batch_id,
-        name=payload.name,
-        subject=payload.subject,
-        test_date=payload.test_date,
-        marks_correct=payload.marks_correct,
-        marks_wrong=payload.marks_wrong,
-        marks_blank=payload.marks_blank,
-    )
-
-    db.add(test)
-
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(
-            status_code=400,
-            detail="A test with this name and date already exists in the batch.",
-        )
-
-    db.refresh(test)
-
-    return {
-        "id": test.id,
-        "name": test.name,
-        "subject": test.subject,
-        "batch_id": test.batch_id,
-        "test_date": test.test_date,
-        "marks_correct": test.marks_correct,
-        "marks_wrong": test.marks_wrong,
-        "marks_blank": test.marks_blank,
-    }
-
-
-@router.get("/tests")
-def list_tests(db: Session = Depends(get_db)):
-    tests = db.query(Test).order_by(Test.id).all()
+    tests = access.institute_tests(db, user).order_by(Test.id).all()
 
     return {
         "tests": [
@@ -280,19 +171,7 @@ def list_tests(db: Session = Depends(get_db)):
     }
 
 
-@router.get("/tests/{test_id}")
-def get_test(
-    test_id: int,
-    db: Session = Depends(get_db),
-):
-    test = db.get(Test, test_id)
-
-    if test is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Test {test_id} not found.",
-        )
-
+def serialize_test(test: Test) -> dict:
     return {
         "id": test.id,
         "name": test.name,
@@ -305,80 +184,25 @@ def get_test(
     }
 
 
-# -------------------------------------------------------------------
-# Questions
-# -------------------------------------------------------------------
-
-@router.post("/questions")
-def create_question(
-    payload: QuestionCreate,
-    db: Session = Depends(get_db),
-):
-    test = db.get(Test, payload.test_id)
-
-    if test is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Test {payload.test_id} not found.",
-        )
-
-    question = Question(
-        test_id=payload.test_id,
-        question_number=payload.question_number,
-        subject=payload.subject,
-        chapter_id=payload.chapter_id,
-        topic_id=payload.topic_id,
-        correct_answer=payload.correct_answer,
-        difficulty=payload.difficulty,
-    )
-
-    db.add(question)
-
-    try:
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise HTTPException(
-            status_code=400,
-            detail="Could not create question. Question number may already exist for this test.",
-        )
-
-    db.refresh(question)
-
-    return {
-        "id": question.id,
-        "test_id": question.test_id,
-        "question_number": question.question_number,
-        "subject": question.subject,
-        "chapter_id": question.chapter_id,
-        "topic_id": question.topic_id,
-        "correct_answer": question.correct_answer,
-        "difficulty": question.difficulty,
-    }
+@router.get("/tests/{test_id}")
+def get_test(test: Test = Depends(owned_test)):
+    return serialize_test(test)
 
 
 @router.get("/tests/{test_id}/questions")
 def list_questions(
-    test_id: int,
+    test: Test = Depends(owned_test),
     db: Session = Depends(get_db),
 ):
-    test = db.get(Test, test_id)
-
-    if test is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Test {test_id} not found.",
-        )
-
     questions = (
         db.query(Question)
-        .filter(Question.test_id == test_id)
+        .filter(Question.test_id == test.id)
         .order_by(Question.question_number)
         .all()
     )
 
     return {
-        "test_id": test_id,
+        "test_id": test.id,
         "questions": [
             {
                 "id": question.id,
@@ -398,22 +222,22 @@ def list_questions(
 # Evaluation
 # -------------------------------------------------------------------
 
-@router.post("/tests/{test_id}/evaluate")
+@router.post(
+    "/tests/{test_id}/evaluate",
+    dependencies=[Depends(require_admin)],
+)
 def evaluate_test_api(
-    test_id: int,
+    test: Test = Depends(owned_test),
     db: Session = Depends(get_db),
 ):
     try:
-        results = evaluate_test(db, test_id)
+        results = evaluate_test(db, test.id)
 
     except ValueError as exc:
-        raise HTTPException(
-            status_code=404,
-            detail=str(exc),
-        )
+        raise _not_found_from(exc)
 
     return {
-        "test_id": test_id,
+        "test_id": test.id,
         "students_evaluated": len(results),
         "results": [
             {
@@ -435,74 +259,62 @@ def evaluate_test_api(
 
 @router.get("/tests/{test_id}/analytics/questions")
 def question_analytics(
-    test_id: int,
+    test: Test = Depends(owned_test),
     db: Session = Depends(get_db),
 ):
     try:
         return {
-            "test_id": test_id,
-            "questions": analyze_questions(db, test_id),
+            "test_id": test.id,
+            "questions": analyze_questions(db, test.id),
         }
 
     except ValueError as exc:
-        raise HTTPException(
-            status_code=404,
-            detail=str(exc),
-        )
+        raise _not_found_from(exc)
 
 
 @router.get("/tests/{test_id}/analytics/chapters-topics")
 def chapter_topic_analytics(
-    test_id: int,
+    test: Test = Depends(owned_test),
     db: Session = Depends(get_db),
 ):
     try:
-        data = analyze_topics_and_chapters(db, test_id)
+        data = analyze_topics_and_chapters(db, test.id)
 
         return {
-            "test_id": test_id,
+            "test_id": test.id,
             "chapters": data["chapters"],
             "topics": data["topics"],
         }
 
     except ValueError as exc:
-        raise HTTPException(
-            status_code=404,
-            detail=str(exc),
-        )
+        raise _not_found_from(exc)
 
 
 @router.get("/tests/{test_id}/analytics/students")
 def student_analytics(
-    test_id: int,
+    test: Test = Depends(owned_test),
     db: Session = Depends(get_db),
 ):
     try:
         return {
-            "test_id": test_id,
-            "students": analyze_students(db, test_id),
+            "test_id": test.id,
+            "students": analyze_students(db, test.id),
         }
 
     except ValueError as exc:
-        raise HTTPException(
-            status_code=404,
-            detail=str(exc),
-        )
+        raise _not_found_from(exc)
 
 
 @router.get("/tests/{test_id}/analytics/batch")
 def batch_analytics(
-    test_id: int,
+    test: Test = Depends(owned_test),
     db: Session = Depends(get_db),
 ):
     try:
-        return analyze_batch(db, test_id)
+        return analyze_batch(db, test.id)
 
     except ValueError as exc:
-        raise HTTPException(
-            status_code=404,
-            detail=str(exc),
-        )
+        raise _not_found_from(exc)
 
 
 # -------------------------------------------------------------------
@@ -511,17 +323,14 @@ def batch_analytics(
 
 @router.get("/tests/{test_id}/action-report")
 def teacher_action_report(
-    test_id: int,
+    test: Test = Depends(owned_test),
     db: Session = Depends(get_db),
 ):
     try:
-        return generate_teacher_action_report(db, test_id)
+        return generate_teacher_action_report(db, test.id)
 
     except ValueError as exc:
-        raise HTTPException(
-            status_code=404,
-            detail=str(exc),
-        )
+        raise _not_found_from(exc)
 
 
 # -------------------------------------------------------------------
@@ -562,6 +371,7 @@ def _serialize_action(action: TeacherAction, db: Session) -> dict:
         "action_type": action.action_type,
         "status": action.status,
         "note": action.note,
+        "created_by_user_id": action.created_by_user_id,
         "created_at": action.created_at.isoformat(),
         "updated_at": action.updated_at.isoformat(),
     }
@@ -570,9 +380,10 @@ def _serialize_action(action: TeacherAction, db: Session) -> dict:
 @router.post("/actions")
 def create_teacher_action(
     payload: TeacherActionCreate,
+    user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    test = db.get(Test, payload.test_id)
+    test = access.find_test(db, user, payload.test_id)
 
     if test is None:
         raise HTTPException(status_code=404, detail="Test not found.")
@@ -585,7 +396,7 @@ def create_teacher_action(
         question = (
             db.query(Question)
             .filter(
-                Question.test_id == payload.test_id,
+                Question.test_id == test.id,
                 Question.question_number == payload.question_number,
             )
             .first()
@@ -599,11 +410,11 @@ def create_teacher_action(
 
         question_id = question.id
 
-    if chapter_id is not None and db.get(Chapter, chapter_id) is None:
+    if chapter_id is not None and access.find_chapter(db, user, chapter_id) is None:
         raise HTTPException(status_code=404, detail="Chapter not found.")
 
     if topic_id is not None:
-        topic = db.get(Topic, topic_id)
+        topic = access.find_topic(db, user, topic_id)
 
         if topic is None:
             raise HTTPException(status_code=404, detail="Topic not found.")
@@ -615,7 +426,7 @@ def create_teacher_action(
             )
 
     action = TeacherAction(
-        test_id=payload.test_id,
+        test_id=test.id,
         question_id=question_id,
         chapter_id=chapter_id,
         topic_id=topic_id,
@@ -625,6 +436,7 @@ def create_teacher_action(
         action_type=payload.action_type,
         status=payload.status,
         note=payload.note,
+        created_by_user_id=user.id,
     )
 
     db.add(action)
@@ -636,49 +448,50 @@ def create_teacher_action(
 
 @router.get("/tests/{test_id}/actions")
 def list_teacher_actions(
-    test_id: int,
+    test: Test = Depends(owned_test),
     db: Session = Depends(get_db),
 ):
-    if db.get(Test, test_id) is None:
-        raise HTTPException(status_code=404, detail="Test not found.")
-
     actions = (
         db.query(TeacherAction)
-        .filter(TeacherAction.test_id == test_id)
+        .filter(TeacherAction.test_id == test.id)
         .order_by(TeacherAction.created_at, TeacherAction.id)
         .all()
     )
 
     return {
-        "test_id": test_id,
+        "test_id": test.id,
         "actions": [_serialize_action(a, db) for a in actions],
     }
 
 
 @router.get("/tests/{test_id}/actions/outcomes")
 def teacher_action_outcomes(
-    test_id: int,
+    test: Test = Depends(owned_test),
     db: Session = Depends(get_db),
 ):
     try:
-        outcomes = get_action_outcomes(db, test_id)
+        outcomes = get_action_outcomes(db, test.id)
 
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise _not_found_from(exc)
 
-    return {"test_id": test_id, "outcomes": outcomes}
+    return {"test_id": test.id, "outcomes": outcomes}
 
 
 @router.patch("/actions/{action_id}")
 def update_teacher_action(
-    action_id: int,
     payload: TeacherActionUpdate,
+    action: TeacherAction = Depends(owned_action),
+    user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    action = db.get(TeacherAction, action_id)
-
-    if action is None:
-        raise HTTPException(status_code=404, detail="Action not found.")
+    # Teachers edit only their own actions; admins can edit any action
+    # in their institute (including ones recorded before sign-in existed).
+    if user.role != "admin" and action.created_by_user_id != user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only edit actions you recorded.",
+        )
 
     fields = payload.model_fields_set
 
@@ -705,64 +518,37 @@ def update_teacher_action(
 
 @router.get("/tests/{previous_test_id}/compare/{current_test_id}")
 def test_progress(
-    previous_test_id: int,
-    current_test_id: int,
+    tests: tuple[Test, Test] = Depends(owned_test_pair),
     db: Session = Depends(get_db),
 ):
+    previous_test, current_test = tests
+
     try:
-        return compare_tests(
-            db,
-            previous_test_id,
-            current_test_id,
-        )
+        return compare_tests(db, previous_test.id, current_test.id)
 
     except ValueError as exc:
-        raise HTTPException(
-            status_code=404,
-            detail=str(exc),
-        )
+        raise _not_found_from(exc)
 
-# ------------------------------------------------------------
+
+# -------------------------------------------------------------------
 # Question Investigation
-# ------------------------------------------------------------
-
-from fastapi import Depends
-from .database.connection import get_db
-
+# -------------------------------------------------------------------
 
 @router.get("/tests/{test_id}/questions/{question_number}/investigation")
 def question_investigation(
-    test_id: int,
     question_number: int,
-    db=Depends(get_db),
+    test: Test = Depends(owned_test),
+    db: Session = Depends(get_db),
 ):
     """
     Return the evidence needed to investigate one question:
     question metadata, aggregate performance, and every student's answer.
     """
 
-    from sqlalchemy import func
-    from .database.models import (
-        Question,
-        Student,
-        StudentAnswer,
-        Chapter,
-        Topic,
-        Test,
-    )
-
-    test = db.get(Test, test_id)
-
-    if test is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Test {test_id} not found.",
-        )
-
     question = (
         db.query(Question)
         .filter(
-            Question.test_id == test_id,
+            Question.test_id == test.id,
             Question.question_number == question_number,
         )
         .first()
@@ -774,17 +560,8 @@ def question_investigation(
             detail=f"Question {question_number} not found.",
         )
 
-    chapter_name = None
-    if question.chapter_id is not None:
-        chapter = db.get(Chapter, question.chapter_id)
-        if chapter is not None:
-            chapter_name = chapter.name
-
-    topic_name = None
-    if question.topic_id is not None:
-        topic = db.get(Topic, question.topic_id)
-        if topic is not None:
-            topic_name = topic.name
+    chapter = db.get(Chapter, question.chapter_id)
+    topic = db.get(Topic, question.topic_id)
 
     students = (
         db.query(Student)
@@ -793,6 +570,14 @@ def question_investigation(
         .all()
     )
 
+    answers = {
+        row.student_id: row.answer
+        for row in db.query(StudentAnswer).filter(
+            StudentAnswer.test_id == test.id,
+            StudentAnswer.question_id == question.id,
+        )
+    }
+
     student_rows = []
 
     correct_count = 0
@@ -800,20 +585,7 @@ def question_investigation(
     blank_count = 0
 
     for student in students:
-        answer_record = (
-            db.query(StudentAnswer)
-            .filter(
-                StudentAnswer.test_id == test_id,
-                StudentAnswer.student_id == student.id,
-                StudentAnswer.question_id == question.id,
-            )
-            .first()
-        )
-
-        answer = None
-
-        if answer_record is not None:
-            answer = answer_record.answer
+        answer = answers.get(student.id)
 
         outcome = classify_answer(answer, question.correct_answer)
         result = outcome.capitalize()
@@ -843,16 +615,16 @@ def question_investigation(
         return round((count / total_students) * 100, 2)
 
     return {
-        "test_id": test_id,
+        "test_id": test.id,
         "test_name": test.name,
         "question": {
             "id": question.id,
             "question_number": question.question_number,
             "subject": question.subject,
             "chapter_id": question.chapter_id,
-            "chapter_name": chapter_name,
+            "chapter_name": chapter.name if chapter else None,
             "topic_id": question.topic_id,
-            "topic_name": topic_name,
+            "topic_name": topic.name if topic else None,
             "correct_answer": question.correct_answer,
             "difficulty": question.difficulty,
         },

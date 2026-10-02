@@ -1,0 +1,13 @@
+[Unit]
+Description=Coaching Test Intelligence weekly restore test
+
+[Service]
+Type=oneshot
+User=coaching
+Group=coaching
+WorkingDirectory=/opt/coaching
+EnvironmentFile=/etc/coaching/coaching.env
+# Restores the newest backup into a temporary directory and checks
+# integrity, foreign keys, schema revision, health and row counts.
+# A failure leaves this unit in the "failed" state (systemctl --failed).
+ExecStart=/opt/coaching/.venv/bin/python scripts/backup.py test-restore

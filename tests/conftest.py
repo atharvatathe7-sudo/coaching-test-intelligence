@@ -22,6 +22,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 import pytest  # noqa: E402
+from alembic import command  # noqa: E402
+from alembic.config import Config  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from backend.app.database import models  # noqa: E402,F401
@@ -33,16 +35,57 @@ import create_test_02  # noqa: E402
 import seed_demo  # noqa: E402
 
 
+def alembic_config() -> Config:
+    config = Config(str(PROJECT_ROOT / "alembic.ini"))
+    config.attributes["configure_logger"] = False
+    return config
+
+
 @pytest.fixture(scope="session", autouse=True)
 def demo_database():
-    """Seed Physics Test 01 and Test 02 into the temporary database."""
+    """
+    Build the temporary database the way production does
+    (alembic upgrade head), then seed Physics Test 01 and Test 02.
+    """
+    command.upgrade(alembic_config(), "head")
     seed_demo.create_demo_data()
     create_test_02.create_test_02()
 
 
+# Every non-GET request must carry the CSRF header (security/csrf.py).
+CSRF_HEADERS = {"X-Requested-With": "fetch"}
+
+
+def make_client(email=None, password=seed_demo.DEMO_PASSWORD) -> TestClient:
+    """A TestClient, signed in as `email` when given."""
+    test_client = TestClient(app, headers=CSRF_HEADERS)
+
+    if email is not None:
+        response = test_client.post(
+            "/api/auth/login",
+            json={"email": email, "password": password},
+        )
+        assert response.status_code == 200, response.text
+
+    return test_client
+
+
 @pytest.fixture(scope="session")
 def client(demo_database):
-    return TestClient(app)
+    """Signed in as the demo institute's admin."""
+    return make_client("admin@demo.local")
+
+
+@pytest.fixture()
+def teacher_client(demo_database):
+    """Signed in as the demo institute's teacher."""
+    return make_client("teacher@demo.local")
+
+
+@pytest.fixture()
+def anon_client(demo_database):
+    """Not signed in (but sends the CSRF header)."""
+    return make_client()
 
 
 @pytest.fixture()

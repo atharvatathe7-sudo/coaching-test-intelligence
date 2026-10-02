@@ -20,6 +20,7 @@ Percentages come from the existing topic/chapter analytics
 from sqlalchemy.orm import Session
 
 from ..database.models import (
+    Batch,
     Chapter,
     Question,
     StudentAnswer,
@@ -28,6 +29,7 @@ from ..database.models import (
     Topic,
 )
 from .analytics import analyze_topics_and_chapters
+from .audit import last_reevaluation
 from .import_csv import normalize_name
 
 # Minimum responses for the target in BOTH tests to report a measurement.
@@ -69,7 +71,11 @@ def find_later_tests(db: Session, source: Test) -> list[Test]:
     return [t for t in candidates if normalize_name(t.subject) == subject]
 
 
-def resolve_target(db: Session, action: TeacherAction) -> dict | None:
+def resolve_target(
+    db: Session,
+    action: TeacherAction,
+    institute_id: int | None = None,
+) -> dict | None:
     """
     Decide what to measure for an action.
 
@@ -77,6 +83,9 @@ def resolve_target(db: Session, action: TeacherAction) -> dict | None:
     chapter, the question's chapter. A question action is always
     measured through its topic/chapter, never as "the same question"
     in another test.
+
+    When institute_id is given, a target owned by another institute is
+    never measured (treated as no target).
     """
 
     question = (
@@ -98,6 +107,11 @@ def resolve_target(db: Session, action: TeacherAction) -> dict | None:
     model = Topic if level == "topic" else Chapter
     row = db.get(model, target_id)
 
+    if institute_id is not None and row is not None:
+        chapter = row if level == "chapter" else db.get(Chapter, row.chapter_id)
+        if chapter is None or chapter.institute_id != institute_id:
+            return None
+
     return {
         "level": level,
         "id": target_id,
@@ -115,6 +129,18 @@ class _Context:
         self._analytics: dict[int, dict] = {}
         self._contents: dict[int, tuple[set, set]] = {}
         self._with_answers: set[int] = set()
+
+    def reevaluated_at(self, test: Test):
+        """Last correction that changed this test's results (cached)."""
+        if not hasattr(self, "_reevaluated"):
+            self._reevaluated = {}
+        if test.id not in self._reevaluated:
+            self._reevaluated[test.id] = last_reevaluation(self.db, test.id)
+        return self._reevaluated[test.id]
+
+    def institute_of(self, test: Test) -> int | None:
+        batch = self.db.get(Batch, test.batch_id)
+        return batch.institute_id if batch is not None else None
 
     def later_tests(self, source: Test) -> list[Test]:
         if source.id not in self._later:
@@ -190,7 +216,7 @@ def _outcome_for(
     source: Test,
     action: TeacherAction,
 ) -> dict:
-    target = resolve_target(ctx.db, action)
+    target = resolve_target(ctx.db, action, ctx.institute_of(source))
 
     outcome = {
         "action": {
@@ -219,6 +245,12 @@ def _outcome_for(
 
     if action.status == "planned":
         outcome["caveats"].append("action_still_planned")
+
+    # The answer key or answers were corrected after the action was
+    # recorded: the finding snapshot on the action may no longer match.
+    reevaluated = ctx.reevaluated_at(source)
+    if reevaluated is not None and reevaluated > action.created_at:
+        outcome["caveats"].append("test_reevaluated_after_action")
 
     if target is None:
         outcome["status"] = "no_target"

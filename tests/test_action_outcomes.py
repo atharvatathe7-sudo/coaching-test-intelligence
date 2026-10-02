@@ -34,17 +34,12 @@ class World:
         db.add(self.batch)
         db.flush()
 
-        for i in range(12):
-            db.add(
-                models.Student(
-                    batch_id=self.batch.id,
-                    roll_number=f"S{i:02d}",
-                    name=f"Student {i}",
-                )
-            )
-
-        self.mech = models.Chapter(subject="Physics", name=f"Mech {n}")
-        self.optics = models.Chapter(subject="Physics", name=f"Optics {n}")
+        self.mech = models.Chapter(
+            institute_id=1, subject="Physics", name=f"Mech {n}"
+        )
+        self.optics = models.Chapter(
+            institute_id=1, subject="Physics", name=f"Optics {n}"
+        )
         db.add_all([self.mech, self.optics])
         db.flush()
 
@@ -54,8 +49,21 @@ class World:
         db.add_all([self.kin, self.force, self.lens])
         db.commit()
 
-        self.students = (
-            db.query(models.Student).filter_by(batch_id=self.batch.id).all()
+        self.students = self.add_students(self.batch)
+
+    def add_students(self, batch):
+        """12 students in the given batch (answers must stay in-batch)."""
+        for i in range(12):
+            self.db.add(
+                models.Student(
+                    batch_id=batch.id,
+                    roll_number=f"S{i:02d}",
+                    name=f"Student {i}",
+                )
+            )
+        self.db.commit()
+        return (
+            self.db.query(models.Student).filter_by(batch_id=batch.id).all()
         )
 
     def test(
@@ -77,6 +85,11 @@ class World:
         answers (default all); with_answers=False imports no answers.
         """
         db = self.db
+        students = (
+            self.students
+            if batch is None
+            else db.query(models.Student).filter_by(batch_id=batch.id).all()
+        )
         test = DbTest(
             batch_id=(batch or self.batch).id,
             name=name,
@@ -107,10 +120,11 @@ class World:
             if answered_questions is not None and number not in answered_questions:
                 continue
 
-            for i, student in enumerate(self.students):
+            for i, student in enumerate(students):
                 db.add(
                     models.StudentAnswer(
                         test_id=test.id,
+                        batch_id=test.batch_id,
                         student_id=student.id,
                         question_id=question.id,
                         answer="A" if i < correct else "B",
@@ -272,6 +286,7 @@ def test_other_batch_and_other_subject_are_ignored(world, db):
     other_batch = models.Batch(institute_id=1, name="Another Batch X")
     db.add(other_batch)
     db.commit()
+    world.add_students(other_batch)
     world.test("Other batch", D2, {1: (world.kin, 12)}, batch=other_batch)
     world.test("Chem", D2, {1: (world.kin, 12)}, subject="Chemistry")
     topic_action(world, t1, world.kin)

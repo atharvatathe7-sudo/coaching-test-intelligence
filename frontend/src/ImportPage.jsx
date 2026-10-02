@@ -1,44 +1,9 @@
 import { useEffect, useState } from "react";
 
 import ValidationReport from "./ValidationReport";
+import { apiFetch } from "./api";
+import { postImport } from "./importClient";
 import "./ImportPage.css";
-
-const API = "";
-
-// Sends one CSV import request and always returns a report object.
-async function postImport(path, fields, file) {
-  const form = new FormData();
-
-  Object.entries(fields).forEach(([key, value]) => {
-    form.append(key, String(value));
-  });
-  form.append("file", file);
-
-  try {
-    const response = await fetch(`${API}/api/imports/${path}`, {
-      method: "POST",
-      body: form,
-    });
-    const report = await response.json();
-
-    if (!report.status) throw new Error("Unexpected response.");
-
-    return report;
-  } catch {
-    return {
-      status: "invalid",
-      errors: [
-        {
-          file: "",
-          message:
-            "Could not reach the server. Check that the backend is running and try again.",
-        },
-      ],
-      warnings: [],
-      summary: {},
-    };
-  }
-}
 
 function FileInput({ label, onChange }) {
   return (
@@ -407,21 +372,14 @@ export default function ImportPage({ onClose }) {
   const [loadError, setLoadError] = useState("");
 
   async function loadTests() {
-    const response = await fetch(`${API}/api/tests`);
-
-    if (!response.ok) throw new Error("tests");
-
-    setTests((await response.json()).tests || []);
+    const data = await apiFetch("/api/tests");
+    setTests(data.tests || []);
   }
 
   useEffect(() => {
     async function load() {
       try {
-        const response = await fetch(`${API}/api/batches`);
-
-        if (!response.ok) throw new Error("batches");
-
-        const data = await response.json();
+        const data = await apiFetch("/api/batches");
 
         setBatches(data.batches || []);
 
