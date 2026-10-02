@@ -583,3 +583,116 @@ select {
 .change-up { color: #15803d; }
 .change-down { color: #b91c1c; }
 .change-flat { color: #64748b; }
+
+/* ---------- Teacher action tracking ---------- */
+
+.investigate-hint {
+  margin-top: 10px;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: #2f5fd0;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.action-tracker {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #edf0f4;
+  font-size: 12px;
+}
+
+.action-record {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  background: #f6f8fb;
+  border-radius: 8px;
+}
+
+.action-record-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.action-status {
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.action-status.planned {
+  background: #fff7df;
+  color: #9a6a00;
+}
+
+.action-status.completed {
+  background: #edf7f0;
+  color: #34764a;
+}
+
+.action-link {
+  margin-left: auto;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: #2f5fd0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.action-note {
+  margin-top: 6px;
+  color: #475467;
+}
+
+.action-meta {
+  margin-top: 4px;
+  color: #98a1b0;
+  font-size: 11px;
+}
+
+.action-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.action-form select,
+.action-note-input {
+  padding: 6px 8px;
+  border: 1px solid #d5dbe5;
+  border-radius: 8px;
+  background: #ffffff;
+  font: inherit;
+}
+
+.action-note-input {
+  flex: 1 1 100%;
+}
+
+.action-save {
+  padding: 6px 14px;
+  background: #1f2a44;
+  border: 0;
+  border-radius: 8px;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.action-save:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.action-error {
+  margin-top: 6px;
+  color: #c84c38;
+}

@@ -363,6 +363,158 @@ function ProgressSection({ previousTest, progress, loading, error }) {
   );
 }
 
+const ACTION_TYPES = [
+  ["review", "Review"],
+  ["reteach", "Reteach"],
+  ["revise", "Revise"],
+  ["monitor", "Monitor"],
+  ["no_action", "No action"],
+];
+
+function actionLabel(value) {
+  const match = ACTION_TYPES.find(([key]) => key === value);
+  return match ? match[1] : value;
+}
+
+function ActionTracker({ item, testId, actions, onSaved }) {
+  const [actionType, setActionType] = useState("review");
+  const [status, setStatus] = useState("planned");
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const evidence = item.evidence || {};
+
+  async function save() {
+    try {
+      setSaving(true);
+      setError("");
+
+      const response = await fetch(`${API}/api/actions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          test_id: testId,
+          question_number: evidence.question_number ?? null,
+          chapter_id: evidence.chapter_id ?? null,
+          topic_id: evidence.topic_id ?? null,
+          finding_type: item.type,
+          finding_title: item.title,
+          finding_reason: item.reason,
+          action_type: actionType,
+          status,
+          note: note.trim() || null,
+        }),
+      });
+
+      if (!response.ok) throw new Error("Save failed.");
+
+      onSaved(await response.json());
+      setNote("");
+    } catch {
+      setError("Could not save the action.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function markCompleted(action) {
+    try {
+      setError("");
+
+      const response = await fetch(
+        `${API}/api/actions/${action.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "completed" }),
+        }
+      );
+
+      if (!response.ok) throw new Error("Update failed.");
+
+      onSaved(await response.json());
+    } catch {
+      setError("Could not update the action.");
+    }
+  }
+
+  return (
+    <div className="action-tracker">
+      {actions.map((action) => (
+        <div className="action-record" key={action.id}>
+          <div className="action-record-head">
+            <strong>{actionLabel(action.action_type)}</strong>
+            <span className={`action-status ${action.status}`}>
+              {action.status}
+            </span>
+            {action.status === "planned" && (
+              <button
+                className="action-link"
+                onClick={() => markCompleted(action)}
+                type="button"
+              >
+                Mark completed
+              </button>
+            )}
+          </div>
+          {action.note && (
+            <div className="action-note">{action.note}</div>
+          )}
+          <div className="action-meta">
+            Recorded{" "}
+            {new Date(action.created_at + "Z").toLocaleDateString()}
+          </div>
+        </div>
+      ))}
+
+      <div className="action-form">
+        <select
+          aria-label="Action type"
+          value={actionType}
+          onChange={(e) => setActionType(e.target.value)}
+        >
+          {ACTION_TYPES.map(([key, label]) => (
+            <option key={key} value={key}>
+              {label}
+            </option>
+          ))}
+        </select>
+
+        <select
+          aria-label="Action status"
+          value={status}
+          onChange={(e) => setStatus(e.target.value)}
+        >
+          <option value="planned">Planned</option>
+          <option value="completed">Completed</option>
+        </select>
+
+        <button
+          className="action-save"
+          disabled={saving}
+          onClick={save}
+          type="button"
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+
+        <input
+          aria-label="Action note"
+          className="action-note-input"
+          maxLength={500}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="Optional note"
+          type="text"
+          value={note}
+        />
+      </div>
+
+      {error && <div className="action-error">{error}</div>}
+    </div>
+  );
+}
+
 function App() {
   const [tests, setTests] = useState([]);
   const [selectedTest, setSelectedTest] = useState(null);
@@ -370,6 +522,7 @@ function App() {
   const [chaptersTopics, setChaptersTopics] = useState(null);
   const [actionReport, setActionReport] = useState(null);
 
+  const [teacherActions, setTeacherActions] = useState([]);
   const [progress, setProgress] = useState(null);
   const [progressLoading, setProgressLoading] = useState(false);
   const [progressError, setProgressError] = useState("");
@@ -454,6 +607,20 @@ function App() {
         setBatch(batchData);
         setChaptersTopics(chapterData);
         setActionReport(actionData);
+
+        try {
+          const actionsResponse = await fetch(
+            `${API}/api/tests/${selectedTest.id}/actions`
+          );
+
+          setTeacherActions(
+            actionsResponse.ok
+              ? (await actionsResponse.json()).actions
+              : []
+          );
+        } catch {
+          setTeacherActions([]);
+        }
       } catch (err) {
         setError("Could not load test analytics.");
       } finally {
@@ -557,6 +724,14 @@ function App() {
     } finally {
       setInvestigationLoading(false);
     }
+  }
+
+  function recordAction(saved) {
+    setTeacherActions((current) =>
+      current.some((a) => a.id === saved.id)
+        ? current.map((a) => (a.id === saved.id ? saved : a))
+        : [...current, saved]
+    );
   }
 
   function closeInvestigation() {
@@ -768,13 +943,9 @@ function App() {
                 {(actionReport?.priorities || [])
                   .slice(0, 6)
                   .map((item, index) => (
-                    <button
-                      className="attention-card attention-card-button"
+                    <div
+                      className="attention-card"
                       key={`${item.title}-${index}`}
-                      onClick={() =>
-                        openInvestigation(item)
-                      }
-                      type="button"
                     >
                       <div className="attention-top">
                         <span
@@ -804,16 +975,33 @@ function App() {
 
                       {item?.evidence
                         ?.question_number && (
-                        <div className="investigate-hint">
+                        <button
+                          className="investigate-hint"
+                          onClick={() =>
+                            openInvestigation(item)
+                          }
+                          type="button"
+                        >
                           Tap to investigate Question{" "}
                           {
                             item.evidence
                               .question_number
                           }{" "}
                           →
-                        </div>
+                        </button>
                       )}
-                    </button>
+
+                      <ActionTracker
+                        actions={teacherActions.filter(
+                          (a) =>
+                            a.finding_type === item.type &&
+                            a.finding_title === item.title
+                        )}
+                        item={item}
+                        onSaved={recordAction}
+                        testId={selectedTest.id}
+                      />
+                    </div>
                   ))}
               </div>
             </section>

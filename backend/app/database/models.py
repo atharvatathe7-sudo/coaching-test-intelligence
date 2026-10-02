@@ -329,3 +329,82 @@ class TestResult(Base):
             name="uq_result_test_student",
         ),
     )
+
+
+class TeacherAction(Base):
+    """
+    A teacher's recorded response to a finding in the Teacher Action Report.
+
+    The finding_* columns keep a snapshot of the finding as it was shown to
+    the teacher, so the record stays understandable even if analytics change.
+    The test_id link allows later comparison with subsequent tests; the
+    record itself makes no claim about cause or effect.
+    """
+
+    __tablename__ = "teacher_actions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    test_id: Mapped[int] = mapped_column(
+        ForeignKey("tests.id"),
+        nullable=False,
+    )
+
+    question_id: Mapped[int | None] = mapped_column(
+        ForeignKey("questions.id"),
+        nullable=True,
+    )
+
+    chapter_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chapters.id"),
+        nullable=True,
+    )
+
+    topic_id: Mapped[int | None] = mapped_column(
+        ForeignKey("topics.id"),
+        nullable=True,
+    )
+
+    # Snapshot of the originating finding.
+    finding_type: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+
+    finding_title: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    finding_reason: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    action_type: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(20),
+        default="planned",
+        nullable=False,
+    )
+
+    note: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+    )

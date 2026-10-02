@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -8,6 +10,9 @@ from .database.models import (
     Student,
     Test,
     Question,
+    Chapter,
+    Topic,
+    TeacherAction,
 )
 from .schemas.api import (
     InstituteCreate,
@@ -15,6 +20,8 @@ from .schemas.api import (
     StudentCreate,
     TestCreate,
     QuestionCreate,
+    TeacherActionCreate,
+    TeacherActionUpdate,
 )
 from .services.evaluation import evaluate_test
 from .services.analytics import (
@@ -495,6 +502,167 @@ def teacher_action_report(
             status_code=404,
             detail=str(exc),
         )
+
+
+# -------------------------------------------------------------------
+# Teacher Action Tracking
+# -------------------------------------------------------------------
+
+def _serialize_action(action: TeacherAction, db: Session) -> dict:
+    question = (
+        db.get(Question, action.question_id)
+        if action.question_id
+        else None
+    )
+    chapter = (
+        db.get(Chapter, action.chapter_id)
+        if action.chapter_id
+        else None
+    )
+    topic = (
+        db.get(Topic, action.topic_id)
+        if action.topic_id
+        else None
+    )
+
+    return {
+        "id": action.id,
+        "test_id": action.test_id,
+        "question_id": action.question_id,
+        "question_number": (
+            question.question_number if question else None
+        ),
+        "chapter_id": action.chapter_id,
+        "chapter_name": chapter.name if chapter else None,
+        "topic_id": action.topic_id,
+        "topic_name": topic.name if topic else None,
+        "finding_type": action.finding_type,
+        "finding_title": action.finding_title,
+        "finding_reason": action.finding_reason,
+        "action_type": action.action_type,
+        "status": action.status,
+        "note": action.note,
+        "created_at": action.created_at.isoformat(),
+        "updated_at": action.updated_at.isoformat(),
+    }
+
+
+@router.post("/actions")
+def create_teacher_action(
+    payload: TeacherActionCreate,
+    db: Session = Depends(get_db),
+):
+    test = db.get(Test, payload.test_id)
+
+    if test is None:
+        raise HTTPException(status_code=404, detail="Test not found.")
+
+    question_id = None
+    chapter_id = payload.chapter_id
+    topic_id = payload.topic_id
+
+    if payload.question_number is not None:
+        question = (
+            db.query(Question)
+            .filter(
+                Question.test_id == payload.test_id,
+                Question.question_number == payload.question_number,
+            )
+            .first()
+        )
+
+        if question is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Question not found in this test.",
+            )
+
+        question_id = question.id
+
+    if chapter_id is not None and db.get(Chapter, chapter_id) is None:
+        raise HTTPException(status_code=404, detail="Chapter not found.")
+
+    if topic_id is not None:
+        topic = db.get(Topic, topic_id)
+
+        if topic is None:
+            raise HTTPException(status_code=404, detail="Topic not found.")
+
+        if chapter_id is not None and topic.chapter_id != chapter_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Topic does not belong to the given chapter.",
+            )
+
+    action = TeacherAction(
+        test_id=payload.test_id,
+        question_id=question_id,
+        chapter_id=chapter_id,
+        topic_id=topic_id,
+        finding_type=payload.finding_type,
+        finding_title=payload.finding_title,
+        finding_reason=payload.finding_reason,
+        action_type=payload.action_type,
+        status=payload.status,
+        note=payload.note,
+    )
+
+    db.add(action)
+    db.commit()
+    db.refresh(action)
+
+    return _serialize_action(action, db)
+
+
+@router.get("/tests/{test_id}/actions")
+def list_teacher_actions(
+    test_id: int,
+    db: Session = Depends(get_db),
+):
+    if db.get(Test, test_id) is None:
+        raise HTTPException(status_code=404, detail="Test not found.")
+
+    actions = (
+        db.query(TeacherAction)
+        .filter(TeacherAction.test_id == test_id)
+        .order_by(TeacherAction.created_at, TeacherAction.id)
+        .all()
+    )
+
+    return {
+        "test_id": test_id,
+        "actions": [_serialize_action(a, db) for a in actions],
+    }
+
+
+@router.patch("/actions/{action_id}")
+def update_teacher_action(
+    action_id: int,
+    payload: TeacherActionUpdate,
+    db: Session = Depends(get_db),
+):
+    action = db.get(TeacherAction, action_id)
+
+    if action is None:
+        raise HTTPException(status_code=404, detail="Action not found.")
+
+    fields = payload.model_fields_set
+
+    if "action_type" in fields and payload.action_type is not None:
+        action.action_type = payload.action_type
+
+    if "status" in fields and payload.status is not None:
+        action.status = payload.status
+
+    if "note" in fields:
+        action.note = payload.note
+
+    action.updated_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(action)
+
+    return _serialize_action(action, db)
 
 
 # -------------------------------------------------------------------
