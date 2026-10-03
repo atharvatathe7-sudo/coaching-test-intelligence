@@ -19,17 +19,30 @@ class _TooLarge(Exception):
     pass
 
 
+def _is_omr_upload(path: str) -> bool:
+    return path.startswith("/api/tests/") and path.endswith("/omr/import")
+
+
 def _limit_for(path: str) -> int:
     if path.startswith("/api/imports/"):
         return config.MAX_IMPORT_REQUEST_BYTES
+    if _is_omr_upload(path):
+        return config.MAX_OMR_REQUEST_BYTES
     return config.MAX_REQUEST_BYTES
 
 
-async def _reject(send) -> None:
-    body = json.dumps(
-        {"detail": "The request is too large. CSV files may be up to "
-                   f"{config.MAX_UPLOAD_BYTES // (1024 * 1024)} MB."}
-    ).encode()
+async def _reject(send, path: str = "") -> None:
+    if _is_omr_upload(path):
+        detail = (
+            "The request is too large. OMR uploads may be up to "
+            f"{config.MAX_OMR_REQUEST_BYTES // (1024 * 1024)} MB in total."
+        )
+    else:
+        detail = (
+            "The request is too large. CSV files may be up to "
+            f"{config.MAX_UPLOAD_BYTES // (1024 * 1024)} MB."
+        )
+    body = json.dumps({"detail": detail}).encode()
     await send(
         {
             "type": "http.response.start",
@@ -62,7 +75,7 @@ class BodySizeLimitMiddleware:
             except ValueError:
                 too_big = True
             if too_big:
-                await _reject(send)
+                await _reject(send, scope["path"])
                 return
 
         received = 0
@@ -87,4 +100,4 @@ class BodySizeLimitMiddleware:
             await self.app(scope, limited_receive, tracking_send)
         except _TooLarge:
             if not started:
-                await _reject(send)
+                await _reject(send, scope["path"])

@@ -1,0 +1,21 @@
+{
+  "id": "prototype-60q",
+  "version": 1,
+  "description": "Prototype layout: 6-digit numeric roll number and 60 four-option questions in two columns of 30. For flat, aligned images only (no page-detection markers). Real answer sheets need their own template.",
+  "omr_template": "template.json",
+  "options": [
+    "A",
+    "B",
+    "C",
+    "D"
+  ],
+  "roll": {
+    "field": "Roll",
+    "digits": 6
+  },
+  "questions": {
+    "label": "q{n}",
+    "first": 1,
+    "last": 60
+  }
+}

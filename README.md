@@ -26,6 +26,9 @@ backend/
     main.py            FastAPI app, middleware, startup checks, /api/health
     config.py          Mode, data directory, paths and settings (single source)
     frontend_serving.py Serves the built React app in local mode
+    omr_api.py         OMR image import endpoint (admin)
+    omr/               OMR: template, checker (runs OMRChecker), normalization,
+                       validation, service (bridge to the answer import)
     api.py             Main API routes (signed-in users)
     auth_api.py        Login, logout, current user, password change
     users_api.py       Admin user management
@@ -40,7 +43,8 @@ backend/
   requirements.txt     Runtime dependencies (pinned)
   requirements-dev.txt Runtime + test dependencies
 frontend/              React + Vite dashboard (src/App.jsx, api.js, AdminPage.jsx)
-scripts/               run_local.py, seed_demo.py, create_test_02.py, manage.py, backup.py
+scripts/               verify_omrchecker.py, run_local.py, seed_demo.py, create_test_02.py, manage.py, backup.py
+third_party/omrchecker Vendored OMRChecker (MIT), pinned to commit 5cf44a5
 deploy/                Caddy, systemd units, environment template, upgrade.sh
 docs/OPERATIONS.md     Deployment, backups, restore, pilot checklist
 tests/                 pytest suite
@@ -356,6 +360,63 @@ Windows paths and behaviour are prepared for (platform-aware defaults,
 no Linux-only paths in the runtime) but **have not been tested on
 Windows**. There is no installer, Windows service, bundled Python, tray
 app or first-run setup screen yet.
+
+## OMR answer sheets (images)
+
+Besides CSV answers, a test's answers can be read from **PNG or JPEG
+images** of filled-in answer sheets: on the Import page, stage 4 (or
+`POST /api/tests/{test_id}/omr/import`, admin only).
+
+```
+images -> OMR recognition -> our normalization -> validation
+       -> the existing answer import and evaluation (unchanged)
+```
+
+OMR only *reads* the sheets. It never calculates marks: scores come from
+the application's existing evaluation, exactly as for a CSV import.
+
+**Staged and all-or-nothing.** "Check sheets" (dry run, the default) reads
+and validates everything and saves nothing. "Import and evaluate" saves
+only when every sheet is clean, in one transaction through the existing
+answer import. Any error blocks the whole batch; no sheet is skipped.
+
+**What is checked.** Each sheet's roll number must match a student in the
+test's batch exactly (no fuzzy matching); two sheets with the same roll
+are an error; answers are only taken for the selected test's questions
+(other fields on the sheet are reported, never imported); every upload
+must be a real PNG/JPEG within the size limits.
+
+**Recognition states.** Each answer is `recognized` (one option),
+`blank`, `multi_mark` (two or more options), `invalid` or
+`review_required` (no value). A blank and a multi-mark are never mixed
+up, even though evaluation scores both as no answer.
+
+**Temporary behaviour until a review screen exists (Stage 3).** A batch
+containing any multi-marked, invalid or missing answer is reported as
+**Review required** and is **not imported**, so an ambiguous mark can never
+be stored as an ordinary blank. Fix or rescan those sheets and upload again.
+
+**Limits.** At most 100 images per batch, 12 MB each, 200 MB in total
+(see `backend/app/config.py`). Images are processed in the request and
+are never stored. Processing is synchronous; there is no job queue.
+
+**Template.** The sheet layout is a controlled template under
+`backend/app/omr/templates/` (a layout file for the engine plus a
+manifest saying which fields are the roll number and the questions). The
+built-in `prototype-60q` template is a **prototype**: a 6-digit numeric
+roll number and 60 four-option questions, for flat, aligned images. The
+roll numbers in a roster must be exactly those digits to match. A real
+institute's sheet needs its own template; there is no template editor.
+
+**Engine and licence.** Recognition uses
+[OMRChecker](https://github.com/Udayraj123/OMRChecker) (MIT), included
+unmodified at the single upstream commit `5cf44a5` in
+`third_party/omrchecker/` and run as a separate headless process. See
+`THIRD_PARTY_NOTICES.md`. Check the pin with
+`python scripts/verify_omrchecker.py`. Its image-only dependencies are in
+`backend/requirements-omr.txt` (PyMuPDF and PDF input are deliberately not
+included). If they are not installed, the OMR endpoint answers 503 and the
+rest of the application is unaffected.
 
 ## Excel export
 

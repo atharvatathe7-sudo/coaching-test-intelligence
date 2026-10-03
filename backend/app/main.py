@@ -20,6 +20,7 @@ from .api import router as api_router
 from .auth_api import router as auth_router
 from .corrections_api import router as corrections_router
 from .import_api import router as import_router
+from .omr_api import router as omr_router
 from .security.body_limit import BodySizeLimitMiddleware
 from .security.csrf import CSRFMiddleware
 from .users_api import router as users_router
@@ -81,6 +82,7 @@ app.include_router(users_router)
 app.include_router(api_router)
 app.include_router(corrections_router)
 app.include_router(import_router)
+app.include_router(omr_router)
 
 
 if config.SERVE_FRONTEND:

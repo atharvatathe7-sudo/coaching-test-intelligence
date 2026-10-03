@@ -173,3 +173,22 @@ MAX_REQUEST_BYTES = 1024 * 1024
 
 # Interactive API docs are only served in development.
 API_DOCS_ENABLED = APP_MODE == "development"
+
+# ---- OMR image uploads (Stage 2B) -----------------------------------
+# Sheets are photographed or scanned; PDF input is not supported.
+OMR_ALLOWED_EXTENSIONS = (".png", ".jpg", ".jpeg")
+MAX_OMR_IMAGE_BYTES = 12 * 1024 * 1024
+MAX_OMR_FILES = 100
+# Whole request (all images together); enforced while receiving.
+MAX_OMR_REQUEST_BYTES = 200 * 1024 * 1024
+# Decoded size is checked from the image header before any decoding:
+# a small file can still describe an enormous picture.
+OMR_MIN_IMAGE_SIDE = 200
+OMR_MAX_IMAGE_PIXELS = 50_000_000
+# The recogniser runs as a child process; it is killed after this long
+# (a fixed allowance plus a per-sheet allowance).
+OMR_TIMEOUT_BASE_SECONDS = 60
+OMR_TIMEOUT_PER_SHEET_SECONDS = 10
+# How many OMR batches may run at once on this computer.
+OMR_MAX_CONCURRENT_BATCHES = 2
+

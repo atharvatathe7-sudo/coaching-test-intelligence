@@ -120,6 +120,15 @@ closed); `frontend_serving.py` serves `frontend/dist`; `scripts/run_local.py`
 starts it. See README "Local Prototype Setup". No Caddy/systemd is needed
 locally; `deploy/` and `docs/OPERATIONS.md` are the server option.
 
+OMR ingestion (Stage 2B): `backend/app/omr/` turns images of answer sheets
+into our own `OMRAnswer` model (recognized / blank / multi_mark / invalid /
+review_required) and hands only validated, unambiguous answers to the
+existing answer import (`services/importer.py`). OMRChecker is vendored
+unmodified at commit 5cf44a5 in `third_party/omrchecker/`, run as a
+headless child process by `omr/checker.py` only; nothing else touches its
+output. OMR never calculates marks. A batch with unresolved multi-marks is
+reported as review required and is not imported (no review UI yet).
+
 Business logic:
 
 - `backend/app/services/evaluation.py`

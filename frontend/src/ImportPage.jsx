@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 
+import OmrResult from "./OmrResult";
 import ValidationReport from "./ValidationReport";
-import { apiFetch } from "./api";
+import { ApiError, apiFetch } from "./api";
 import { postImport } from "./importClient";
 import "./ImportPage.css";
 
@@ -364,6 +365,140 @@ function AnswersStage({ tests, testId, onTestChange, onDone }) {
   );
 }
 
+function OmrStage({ tests, testId, onTestChange, onDone }) {
+  const [files, setFiles] = useState([]);
+  const [replace, setReplace] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  function reset() {
+    setResult(null);
+    setError("");
+  }
+
+  async function run(dryRun) {
+    setBusy(true);
+    setError("");
+
+    const form = new FormData();
+    form.append("dry_run", String(dryRun));
+    form.append("replace", String(replace));
+    files.forEach((file) => form.append("files", file));
+
+    try {
+      setResult(
+        await apiFetch(`/api/tests/${testId}/omr/import`, {
+          method: "POST",
+          body: form,
+        })
+      );
+    } catch (err) {
+      setResult(null);
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Could not reach the server. Check that the backend is running and try again."
+      );
+    }
+
+    setBusy(false);
+  }
+
+  return (
+    <Stage
+      number={4}
+      title="OMR answer sheets (images)"
+      hint="PNG or JPEG images of filled-in sheets for the selected test. Sheets are read and checked first; nothing is saved until every sheet is clean. Sheets with multi-marked or unreadable answers are listed as 'Review required' and are not imported."
+    >
+      <label className="import-field">
+        <span>Test</span>
+        <select
+          onChange={(e) => {
+            onTestChange(Number(e.target.value));
+            reset();
+          }}
+          value={testId || ""}
+        >
+          <option value="">Select a test…</option>
+          {tests.map((test) => (
+            <option key={test.id} value={test.id}>
+              {test.name} ({test.test_date})
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="import-field">
+        <span>Sheet images</span>
+        <input
+          accept=".png,.jpg,.jpeg,image/png,image/jpeg"
+          multiple
+          onChange={(event) => {
+            setFiles(Array.from(event.target.files || []));
+            reset();
+          }}
+          type="file"
+        />
+      </label>
+      {files.length > 0 && (
+        <p className="import-hint">{files.length} image(s) selected.</p>
+      )}
+
+      <label className="import-confirm">
+        <input
+          checked={replace}
+          onChange={(e) => {
+            setReplace(e.target.checked);
+            reset();
+          }}
+          type="checkbox"
+        />
+        Replace existing answers for this test
+      </label>
+
+      <div className="import-actions">
+        <button
+          disabled={!files.length || !testId || busy}
+          onClick={() => run(true)}
+          type="button"
+        >
+          {busy ? "Reading sheets…" : "Check sheets"}
+        </button>
+
+        <button
+          className="primary"
+          disabled={
+            result?.status !== "accepted" || result?.committed || busy
+          }
+          onClick={() => run(false)}
+          type="button"
+        >
+          Import and evaluate
+        </button>
+      </div>
+
+      {error && <div className="error-card">{error}</div>}
+
+      {result?.status === "imported" && (
+        <div className="import-success">
+          Sheets imported and evaluated successfully (
+          {result.import?.students_evaluated} students).{" "}
+          <button
+            className="primary"
+            onClick={() => onDone(testId)}
+            type="button"
+          >
+            Open dashboard
+          </button>
+        </div>
+      )}
+
+      <OmrResult result={result} />
+    </Stage>
+  );
+}
+
 export default function ImportPage({ onClose }) {
   const [batches, setBatches] = useState([]);
   const [tests, setTests] = useState([]);
@@ -458,6 +593,13 @@ export default function ImportPage({ onClose }) {
         />
 
         <AnswersStage
+          onDone={onClose}
+          onTestChange={setTestId}
+          testId={testId}
+          tests={batchTests}
+        />
+
+        <OmrStage
           onDone={onClose}
           onTestChange={setTestId}
           testId={testId}

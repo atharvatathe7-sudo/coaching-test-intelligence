@@ -339,3 +339,54 @@
   border-radius: 7px;
   font: inherit;
 }
+
+/* ---------- OMR sheets ---------- */
+
+.validation-report.status-accepted {
+  border-color: #bfdcc7;
+  background: #f6fbf7;
+}
+
+.validation-report.status-rejected {
+  border-color: #f0c2b9;
+  background: #fff7f5;
+}
+
+.validation-report.status-review_required {
+  border-color: #ecd9a3;
+  background: #fffbee;
+}
+
+.omr-message {
+  margin: 4px 0 10px;
+}
+
+.omr-counts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+
+.omr-counts div {
+  padding: 8px 10px;
+  border: 1px solid #e6eaf0;
+  border-radius: 9px;
+  background: #ffffff;
+  opacity: 0.7;
+}
+
+.omr-counts div.has-value {
+  opacity: 1;
+}
+
+.omr-counts dt {
+  color: #697488;
+  font-size: 11px;
+}
+
+.omr-counts dd {
+  margin: 2px 0 0;
+  font-size: 17px;
+  font-weight: 700;
+}
