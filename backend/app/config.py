@@ -192,3 +192,16 @@ OMR_TIMEOUT_PER_SHEET_SECONDS = 10
 # How many OMR batches may run at once on this computer.
 OMR_MAX_CONCURRENT_BATCHES = 2
 
+# ---- OMR review (Stage 3) ----------------------------------------------
+# Images of sheets awaiting review are kept here, under the application
+# data directory (never inside the source tree) and only until the batch
+# is committed or discarded. In development mode, where there is no data
+# directory, the per-user default location is used.
+OMR_STORAGE_DIR = Path(
+    _text("COACHING_OMR_DIR")
+    or (DATA_DIR or _default_data_dir()) / "omr"
+).expanduser()
+# A batch still PROCESSING after this long was interrupted (for example by
+# a crash) and is shown as FAILED so it can be discarded.
+OMR_PROCESSING_STALE_SECONDS = 30 * 60
+

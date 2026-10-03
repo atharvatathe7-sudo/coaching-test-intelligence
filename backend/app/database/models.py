@@ -666,3 +666,228 @@ class AuditLog(Base):
         Index(None, "institute_id", "created_at"),
         Index(None, "entity_type", "entity_id"),
     )
+
+
+# ---------------------------------------------------------------------
+# OMR review (Stage 3)
+#
+# A batch of scanned answer sheets is stored here while it awaits review.
+# Nothing in these tables is an answer yet: StudentAnswer / TestResult are
+# only written when the batch is committed, in one transaction.
+# ---------------------------------------------------------------------
+
+OMR_BATCH_STATUSES = (
+    "PROCESSING",
+    "REVIEW_REQUIRED",
+    "READY_TO_COMMIT",
+    "COMMITTED",
+    "DISCARDED",
+    "FAILED",
+)
+OMR_SHEET_STATUSES = (
+    "PENDING",
+    "ACCEPTED",
+    "REVIEW_REQUIRED",
+    "INVALID",
+    "REVIEWED",
+    "COMMITTED",
+)
+OMR_RECOGNITION_STATUSES = (
+    "recognized",
+    "blank",
+    "multi_mark",
+    "invalid",
+    "review_required",
+)
+OMR_REVIEW_REASONS = (
+    "MULTI_MARK",
+    "INVALID_ANSWER",
+    "MISSING_ANSWER_FIELD",
+)
+
+
+def _in_list(column: str, values) -> str:
+    return f"{column} IN ({', '.join(repr(v) for v in values)})"
+
+
+class OMRBatch(Base):
+    __tablename__ = "omr_batches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    # Owner. Always the institute of the test's batch; stored so access
+    # checks do not need a join.
+    institute_id: Mapped[int] = mapped_column(
+        ForeignKey("institutes.id"), nullable=False
+    )
+    test_id: Mapped[int] = mapped_column(ForeignKey("tests.id"), nullable=False)
+    created_by_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    template_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    template_version: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # Counts kept up to date as the batch is reviewed.
+    total_sheets: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    accepted_sheets: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    review_required_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    error_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    committed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    committed_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    discarded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    discarded_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    # Set once the stored images have been deleted.
+    images_removed_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+    # A short code, never an exception message.
+    failure_code: Mapped[str | None] = mapped_column(String(30), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            _in_list("status", OMR_BATCH_STATUSES), name="omr_batch_status"
+        ),
+        Index(None, "institute_id", "test_id"),
+        Index(None, "status"),
+    )
+
+
+class OMRSheet(Base):
+    """One uploaded sheet image of a batch."""
+
+    __tablename__ = "omr_sheets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("omr_batches.id", ondelete="CASCADE"), nullable=False
+    )
+    sheet_index: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # The uploader's filename: a label only, never a path.
+    original_filename: Mapped[str] = mapped_column(String(200), nullable=False)
+
+    # The roll number exactly as read (None if nothing usable was read) and
+    # the one in effect. They differ only after a teacher assigns a roll.
+    roll_raw: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    roll_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    roll_source: Mapped[str] = mapped_column(
+        String(10), default="omr", nullable=False
+    )
+
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    # Set when the sheet could not be read at all.
+    unreadable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Stored image files (see omr/storage.py). The extension is chosen by
+    # the server from the file's content, never from the upload's name.
+    image_ext: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    has_checked_image: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+
+    # Bumped on every teacher change, so two people cannot silently
+    # overwrite each other.
+    revision: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reviewed_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+
+    __table_args__ = (
+        UniqueConstraint("batch_id", "sheet_index", name="uq_omr_sheet_index"),
+        CheckConstraint(
+            _in_list("status", OMR_SHEET_STATUSES), name="omr_sheet_status"
+        ),
+        CheckConstraint(
+            "roll_source IN ('omr', 'teacher')", name="omr_roll_source"
+        ),
+        Index(None, "batch_id"),
+    )
+
+
+class OMRAnswer(Base):
+    """
+    What the recogniser read for one question on one sheet, and the final
+    answer once it is settled.
+
+    The recognition columns are never changed after creation. A teacher's
+    decision goes in final_answer (and resolved/reviewed*), so the original
+    reading stays available, for example "read AB, resolved as A".
+    """
+
+    __tablename__ = "omr_answers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    sheet_id: Mapped[int] = mapped_column(
+        ForeignKey("omr_sheets.id", ondelete="CASCADE"), nullable=False
+    )
+    question_number: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # --- the recognition result: write once ---
+    raw_value: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    recognized_answer: Mapped[str | None] = mapped_column(String(1), nullable=True)
+    recognition_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Why a person must look at it; NULL for a clear answer.
+    review_reason: Mapped[str | None] = mapped_column(String(30), nullable=True)
+
+    # --- the decision ---
+    # resolved is False only for an item still awaiting review. When it is
+    # True, final_answer is the answer to import (NULL means blank).
+    resolved: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    final_answer: Mapped[str | None] = mapped_column(String(1), nullable=True)
+    reviewed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reviewed_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("sheet_id", "question_number", name="uq_omr_answer_question"),
+        CheckConstraint(
+            _in_list("recognition_status", OMR_RECOGNITION_STATUSES),
+            name="omr_recognition_status",
+        ),
+        CheckConstraint(
+            "recognized_answer IS NULL OR recognized_answer IN ('A', 'B', 'C', 'D')",
+            name="omr_recognized_option",
+        ),
+        CheckConstraint(
+            "final_answer IS NULL OR final_answer IN ('A', 'B', 'C', 'D')",
+            name="omr_final_option",
+        ),
+        CheckConstraint(
+            "review_reason IS NULL OR " + _in_list("review_reason", OMR_REVIEW_REASONS),
+            name="omr_review_reason",
+        ),
+        # An unresolved item has no final answer yet.
+        CheckConstraint(
+            "resolved = 1 OR final_answer IS NULL", name="omr_final_needs_resolved"
+        ),
+        Index(None, "sheet_id"),
+    )
+

@@ -24,6 +24,7 @@ template editor.
 import json
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -63,6 +64,11 @@ class OMRTemplate:
     roll_digits: int
     question_numbers: tuple[int, ...]
     question_label: str            # e.g. "q{n}"
+    # For sheets with alignment markers: how far (pixels, at design scale)
+    # the marker centres are from the sheet edge, and the marker image
+    # file in the template folder. 0 / None for a flat, unmarked sheet.
+    sheet_margin: int = 0
+    marker_file: str | None = None
 
     @property
     def layout_path(self) -> Path:
@@ -74,6 +80,60 @@ class OMRTemplate:
     @property
     def question_columns(self) -> dict[str, int]:
         return {self.column_for(n): n for n in self.question_numbers}
+
+    def question_region(self, question_number: int) -> dict | None:
+        """
+        Where a question's bubbles are, in the coordinates of the aligned
+        sheet image (the template's page size), with one row of context
+        above and below. Used to crop the image for review. None if the
+        layout has no such question.
+        """
+        return _question_region(self.layout_path, self.column_for(question_number), len(self.options))
+
+
+@lru_cache(maxsize=32)
+def _layout(path: Path) -> dict:
+    return json.loads(Path(path).read_text("utf-8"))
+
+
+def _question_region(layout_path: Path, column: str, option_count: int) -> dict | None:
+    layout = _layout(layout_path)
+    page_w, page_h = layout["pageDimensions"]
+    bubble_w, bubble_h = layout["bubbleDimensions"]
+
+    for block in layout["fieldBlocks"].values():
+        labels = expand_labels(block.get("fieldLabels", []))
+
+        if column not in labels:
+            continue
+
+        index = labels.index(column)
+        origin_x, origin_y = block["origin"]
+        bubbles_gap, labels_gap = block["bubblesGap"], block["labelsGap"]
+        horizontal = block.get("direction", "horizontal") == "horizontal"
+
+        if horizontal:
+            x = origin_x
+            y = origin_y + index * labels_gap
+            width = (option_count - 1) * bubbles_gap + bubble_w
+            height = bubble_h
+            pad_x, pad_y = bubble_w, labels_gap
+        else:
+            x = origin_x + index * labels_gap
+            y = origin_y
+            width = bubble_w
+            height = (option_count - 1) * bubbles_gap + bubble_h
+            pad_x, pad_y = labels_gap, bubble_h
+
+        left, top = max(0, x - pad_x), max(0, y - pad_y)
+        right, bottom = min(page_w, x + width + pad_x), min(page_h, y + height + pad_y)
+
+        return {
+            "x": left, "y": top, "width": right - left, "height": bottom - top,
+            "page_width": page_w, "page_height": page_h,
+        }
+
+    return None
 
 
 def load_template(directory: Path) -> OMRTemplate:
@@ -103,6 +163,8 @@ def load_template(directory: Path) -> OMRTemplate:
             roll_digits=int(manifest["roll"]["digits"]),
             question_numbers=numbers,
             question_label=str(questions["label"]),
+            sheet_margin=int(manifest.get("sheet", {}).get("margin", 0)),
+            marker_file=manifest.get("sheet", {}).get("marker"),
         )
     except (KeyError, TypeError, ValueError) as error:
         raise TemplateError(f"manifest incomplete in {directory.name}") from error
@@ -129,6 +191,9 @@ def load_template(directory: Path) -> OMRTemplate:
         raise TemplateError(
             f"template {template.id}: roll field does not match the layout"
         )
+
+    if template.marker_file and not (directory / template.marker_file).is_file():
+        raise TemplateError(f"template {template.id}: marker image missing")
 
     if not template.options or any(len(o) != 1 for o in template.options):
         raise TemplateError(f"template {template.id}: bad answer options")

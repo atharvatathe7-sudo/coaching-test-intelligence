@@ -126,8 +126,17 @@ review_required) and hands only validated, unambiguous answers to the
 existing answer import (`services/importer.py`). OMRChecker is vendored
 unmodified at commit 5cf44a5 in `third_party/omrchecker/`, run as a
 headless child process by `omr/checker.py` only; nothing else touches its
-output. OMR never calculates marks. A batch with unresolved multi-marks is
-reported as review required and is not imported (no review UI yet).
+output. OMR never calculates marks.
+
+OMR review (Stage 3): an upload creates a persistent pending batch
+(`omr_batches`/`omr_sheets`/`omr_answers`, `omr/batches.py`, `omr_api.py`,
+images under `<data dir>/omr/`, served only by tenant-checked routes). An
+admin resolves multi-mark/invalid/missing answers and roll problems; the
+engine's reading is never overwritten (teacher decision = `final_answer`).
+Commit runs the existing answer import (`commit=False`), the audit entry and
+the COMMITTED state in one transaction; no StudentAnswer/TestResult exists
+before it. All OMR routes are admin-only. Images are deleted on commit,
+discard or failure.
 
 Business logic:
 

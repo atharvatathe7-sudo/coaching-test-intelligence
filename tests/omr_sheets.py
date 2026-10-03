@@ -1,84 +1,67 @@
 """
 Synthetic OMR answer sheets for tests, generated on the fly.
 
-Nothing here is a real scan and no upstream sample images are used. Bubble
-positions are computed from the template's own layout file (the one
-OMRChecker reads), so the images always match the template.
+Nothing here is a real scan and no upstream or community sample images
+are used. Sheets are drawn by backend/app/omr/sheet_design.py from the
+template's own layout file, so the pictures always match the template.
 """
-
-import json
 
 import cv2
 import numpy as np
 
-from backend.app.omr.template import expand_labels, get_template
-
-_TYPES = {
-    "QTYPE_INT": ("0123456789", "vertical"),
-    "QTYPE_MCQ4": ("ABCD", "horizontal"),
-}
-
-
-def _bubble_positions(template):
-    """{label: {value: (x, y)}} for every field in the layout."""
-    layout = json.loads(template.layout_path.read_text())
-    positions = {}
-
-    for block in layout["fieldBlocks"].values():
-        values, direction = _TYPES[block["fieldType"]]
-        ox, oy = block["origin"]
-        for i, label in enumerate(expand_labels(block["fieldLabels"])):
-            positions[label] = {}
-            for j, value in enumerate(values):
-                if direction == "horizontal":
-                    xy = (ox + j * block["bubblesGap"], oy + i * block["labelsGap"])
-                else:
-                    xy = (ox + i * block["labelsGap"], oy + j * block["bubblesGap"])
-                positions[label][value] = xy
-
-    return layout, positions
+from backend.app.omr import sheet_design
+from backend.app.omr.template import get_template
 
 
 def render_sheet(roll: str, answers: dict[int, str], template_id=None, seed=0) -> bytes:
     """
-    A PNG of a filled-in sheet.
+    A PNG of a filled-in sheet, drawn flat (no camera effects).
 
-    `roll` has one digit per roll column. `answers` maps question number to
-    "" (blank), "A".."D", or several letters ("AB") for a multi-mark.
+    `roll` has one digit per roll column. `answers` maps question number
+    to "" (blank), "A".."D", or several letters ("AB") for a multi-mark.
     Questions not in `answers` are left blank.
     """
-
     template = get_template(template_id)
-    layout, positions = _bubble_positions(template)
-    width, height = layout["pageDimensions"]
-    box = layout["bubbleDimensions"][0]
-    rng = np.random.default_rng(seed)
+    return sheet_design.to_png(sheet_design.render_sheet(template, roll, answers, seed=seed))
 
-    image = np.full((height, width), 245, np.uint8)
 
-    def centre(xy):
-        return int(xy[0] + box / 2), int(xy[1] + box / 2)
+def photograph(
+    roll: str,
+    answers: dict[int, str],
+    template_id="prototype-marked-60q",
+    seed=0,
+    rotation=2.5,
+    tilt=0.02,
+    scale=0.88,
+    jpeg=True,
+) -> bytes:
+    """
+    A marked sheet as a phone camera might see it: rotated, tilted,
+    smaller than the frame and off-centre, on a darker background, with
+    noise, blur and (optionally) JPEG compression. Deterministic per seed.
+    """
+    template = get_template(template_id)
+    sheet = sheet_design.render_sheet(template, roll, answers, labels=True, seed=seed)
+    rng = np.random.default_rng(seed + 1000)
+    h, w = sheet.shape
+    canvas_w, canvas_h = int(w * 1.25), int(h * 1.2)
 
-    for values in positions.values():
-        for xy in values.values():
-            cv2.circle(image, centre(xy), 12, 150, 2)
+    corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
+    centre = np.float32([w / 2, h / 2])
+    angle = np.deg2rad(rng.uniform(-rotation, rotation))
+    rot = np.float32([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
+    moved = (corners - centre) @ rot.T * scale
+    moved += rng.uniform(-tilt, tilt, moved.shape).astype(np.float32) * [w, h]
+    moved += np.float32([canvas_w / 2, canvas_h / 2]) + rng.uniform(-0.03, 0.03, 2).astype(np.float32) * [w, h]
 
-    def mark(label, value):
-        cv2.circle(image, centre(positions[label][value]), 11, 40, -1)
+    matrix = cv2.getPerspectiveTransform(corners, moved.astype(np.float32))
+    photo = cv2.warpPerspective(
+        sheet, matrix, (canvas_w, canvas_h), borderMode=cv2.BORDER_CONSTANT, borderValue=95
+    )
+    photo = photo.astype(np.float32) + rng.normal(0, 4, photo.shape)
+    photo = cv2.GaussianBlur(np.clip(photo, 0, 255).astype(np.uint8), (3, 3), 0)
 
-    roll_labels = expand_labels(json.loads(
-        template.layout_path.read_text())["customLabels"][template.roll_field])
-    assert len(roll) == len(roll_labels)
-    for label, digit in zip(roll_labels, roll):
-        mark(label, digit)
-
-    for number, letters in answers.items():
-        for letter in letters:
-            mark(template.column_for(number), letter)
-
-    # Mild sensor noise and uneven lighting.
-    shade = np.tile(np.linspace(0.9, 1.0, width, dtype=np.float32), (height, 1))
-    noisy = image.astype(np.float32) * shade + rng.normal(0, 5, image.shape)
-    ok, encoded = cv2.imencode(".png", np.clip(noisy, 0, 255).astype(np.uint8))
+    ok, encoded = cv2.imencode(".jpg", photo, [cv2.IMWRITE_JPEG_QUALITY, 88]) if jpeg \
+        else cv2.imencode(".png", photo)
     assert ok
     return encoded.tobytes()

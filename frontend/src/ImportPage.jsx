@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
-import OmrResult from "./OmrResult";
+import OmrBatchSummary, { IssueList } from "./OmrResult";
+import OmrReview from "./OmrReview";
 import ValidationReport from "./ValidationReport";
 import { ApiError, apiFetch } from "./api";
 import { postImport } from "./importClient";
@@ -365,36 +366,52 @@ function AnswersStage({ tests, testId, onTestChange, onDone }) {
   );
 }
 
-function OmrStage({ tests, testId, onTestChange, onDone }) {
+function OmrStage({ tests, testId, onTestChange, onOpenBatch }) {
   const [files, setFiles] = useState([]);
-  const [replace, setReplace] = useState(false);
-  const [result, setResult] = useState(null);
+  const [templates, setTemplates] = useState([]);
+  const [templateId, setTemplateId] = useState("");
+  const [batches, setBatches] = useState([]);
+  const [rejected, setRejected] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  function reset() {
-    setResult(null);
-    setError("");
-  }
+  useEffect(() => {
+    apiFetch("/api/omr/templates")
+      .then((data) => {
+        setTemplates(data.templates);
+        setTemplateId((current) => current || data.templates[0]?.id || "");
+      })
+      .catch(() => {});
+  }, []);
 
-  async function run(dryRun) {
+  useEffect(() => {
+    if (!testId) return;
+    apiFetch(`/api/tests/${testId}/omr/batches`)
+      .then((data) => setBatches(data.batches))
+      .catch(() => setBatches([]));
+  }, [testId]);
+
+  async function upload() {
     setBusy(true);
     setError("");
+    setRejected(null);
 
     const form = new FormData();
-    form.append("dry_run", String(dryRun));
-    form.append("replace", String(replace));
+    form.append("template_id", templateId);
     files.forEach((file) => form.append("files", file));
 
     try {
-      setResult(
-        await apiFetch(`/api/tests/${testId}/omr/import`, {
-          method: "POST",
-          body: form,
-        })
-      );
+      const result = await apiFetch(`/api/tests/${testId}/omr/import`, {
+        method: "POST",
+        body: form,
+      });
+
+      if (result.batch) {
+        onOpenBatch(result.batch.id);
+      } else {
+        setRejected(result);
+      }
     } catch (err) {
-      setResult(null);
       setError(
         err instanceof ApiError
           ? err.message
@@ -409,14 +426,14 @@ function OmrStage({ tests, testId, onTestChange, onDone }) {
     <Stage
       number={4}
       title="OMR answer sheets (images)"
-      hint="PNG or JPEG images of filled-in sheets for the selected test. Sheets are read and checked first; nothing is saved until every sheet is clean. Sheets with multi-marked or unreadable answers are listed as 'Review required' and are not imported."
+      hint="Upload PNG or JPEG images of filled-in sheets for the selected test. Clear answers are accepted automatically; multi-marked, unexpected or unreadable ones are kept for you to review. Nothing is saved as an answer until you commit the batch."
     >
       <label className="import-field">
         <span>Test</span>
         <select
           onChange={(e) => {
             onTestChange(Number(e.target.value));
-            reset();
+            setRejected(null);
           }}
           value={testId || ""}
         >
@@ -430,71 +447,60 @@ function OmrStage({ tests, testId, onTestChange, onDone }) {
       </label>
 
       <label className="import-field">
+        <span>Sheet template</span>
+        <select onChange={(e) => setTemplateId(e.target.value)} value={templateId}>
+          {templates.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.id} (v{t.version}, {t.questions} questions)
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="import-field">
         <span>Sheet images</span>
         <input
           accept=".png,.jpg,.jpeg,image/png,image/jpeg"
           multiple
           onChange={(event) => {
             setFiles(Array.from(event.target.files || []));
-            reset();
+            setRejected(null);
+            setError("");
           }}
           type="file"
         />
       </label>
-      {files.length > 0 && (
-        <p className="import-hint">{files.length} image(s) selected.</p>
-      )}
-
-      <label className="import-confirm">
-        <input
-          checked={replace}
-          onChange={(e) => {
-            setReplace(e.target.checked);
-            reset();
-          }}
-          type="checkbox"
-        />
-        Replace existing answers for this test
-      </label>
+      {files.length > 0 && <p className="import-hint">{files.length} image(s) selected.</p>}
 
       <div className="import-actions">
         <button
-          disabled={!files.length || !testId || busy}
-          onClick={() => run(true)}
-          type="button"
-        >
-          {busy ? "Reading sheets…" : "Check sheets"}
-        </button>
-
-        <button
           className="primary"
-          disabled={
-            result?.status !== "accepted" || result?.committed || busy
-          }
-          onClick={() => run(false)}
+          disabled={!files.length || !testId || busy}
+          onClick={upload}
           type="button"
         >
-          Import and evaluate
+          {busy ? "Reading sheets…" : "Read sheets and open review"}
         </button>
       </div>
 
       {error && <div className="error-card">{error}</div>}
 
-      {result?.status === "imported" && (
-        <div className="import-success">
-          Sheets imported and evaluated successfully (
-          {result.import?.students_evaluated} students).{" "}
-          <button
-            className="primary"
-            onClick={() => onDone(testId)}
-            type="button"
-          >
-            Open dashboard
-          </button>
+      {rejected && (
+        <div className="validation-report status-invalid">
+          <div className="report-heading">Upload rejected: nothing was stored</div>
+          <IssueList items={rejected.errors} kind="error" title="Errors" />
+          <IssueList items={rejected.warnings} kind="warning" title="Warnings" />
         </div>
       )}
 
-      <OmrResult result={result} />
+      {batches.length > 0 && (
+        <div className="omr-batch-list">
+          <h3>Batches for this test</h3>
+          {batches.map((batch) => (
+            <OmrBatchSummary batch={batch} key={batch.id} onOpen={onOpenBatch} />
+          ))}
+        </div>
+      )}
     </Stage>
   );
 }
@@ -505,6 +511,7 @@ export default function ImportPage({ onClose }) {
   const [batchId, setBatchId] = useState("");
   const [testId, setTestId] = useState(null);
   const [loadError, setLoadError] = useState("");
+  const [reviewBatchId, setReviewBatchId] = useState(null);
 
   async function loadTests() {
     const data = await apiFetch("/api/tests");
@@ -551,60 +558,70 @@ export default function ImportPage({ onClose }) {
       </header>
 
       <main className="dashboard import-page">
-        {loadError && <div className="error-card">{loadError}</div>}
+        {reviewBatchId ? (
+          <OmrReview
+            batchId={reviewBatchId}
+            onBack={() => setReviewBatchId(null)}
+            onDone={onClose}
+          />
+        ) : (
+          <>
+            {loadError && <div className="error-card">{loadError}</div>}
 
-        <section className="panel import-stage">
-          <label className="import-field">
-            <span>Batch</span>
-            <select
-              onChange={(e) => {
-                setBatchId(e.target.value);
-                setTestId(null);
+            <section className="panel import-stage">
+              <label className="import-field">
+                <span>Batch</span>
+                <select
+                  onChange={(e) => {
+                    setBatchId(e.target.value);
+                    setTestId(null);
+                  }}
+                  value={batchId}
+                >
+                  {batches.map((batch) => (
+                    <option key={batch.id} value={batch.id}>
+                      {batch.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <p className="import-hint">
+                Import in order: roster, test setup, then student answers.
+                Each file is validated first; nothing is saved until you
+                import.
+              </p>
+            </section>
+
+            <RosterStage batchId={batchId} />
+
+            <TestSetupStage
+              batchId={batchId}
+              onImported={async (newTestId) => {
+                try {
+                  await loadTests();
+                  setTestId(newTestId);
+                } catch {
+                  setLoadError("Could not refresh the test list.");
+                }
               }}
-              value={batchId}
-            >
-              {batches.map((batch) => (
-                <option key={batch.id} value={batch.id}>
-                  {batch.name}
-                </option>
-              ))}
-            </select>
-          </label>
+            />
 
-          <p className="import-hint">
-            Import in order: roster, test setup, then student answers.
-            Each file is validated first; nothing is saved until you
-            import.
-          </p>
-        </section>
+            <AnswersStage
+              onDone={onClose}
+              onTestChange={setTestId}
+              testId={testId}
+              tests={batchTests}
+            />
 
-        <RosterStage batchId={batchId} />
-
-        <TestSetupStage
-          batchId={batchId}
-          onImported={async (newTestId) => {
-            try {
-              await loadTests();
-              setTestId(newTestId);
-            } catch {
-              setLoadError("Could not refresh the test list.");
-            }
-          }}
-        />
-
-        <AnswersStage
-          onDone={onClose}
-          onTestChange={setTestId}
-          testId={testId}
-          tests={batchTests}
-        />
-
-        <OmrStage
-          onDone={onClose}
-          onTestChange={setTestId}
-          testId={testId}
-          tests={batchTests}
-        />
+            <OmrStage
+              onOpenBatch={setReviewBatchId}
+              onTestChange={setTestId}
+              testId={testId}
+              tests={batchTests}
+            />
+          </>
+        )}
       </main>
     </div>
   );

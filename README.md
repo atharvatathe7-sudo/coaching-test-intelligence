@@ -13,7 +13,8 @@ It is built for a controlled pilot with one real institute: sign-in with
 server-side sessions, admin/teacher roles, institute isolation, database
 integrity enforced by SQLite, migrations, correction workflows with an
 audit log, and verified backups. It is not yet a multi-institute SaaS
-(see "Known limitations" in `docs/OPERATIONS.md`). There is no OMR.
+(see "Known limitations" in `docs/OPERATIONS.md`). Answers can also be
+read from photographed OMR sheets, with a teacher review step (below).
 See `CLAUDE.md` for product rules and scope, and `docs/OPERATIONS.md`
 for deployment, backups and the pilot checklist.
 
@@ -375,36 +376,72 @@ images -> OMR recognition -> our normalization -> validation
 OMR only *reads* the sheets. It never calculates marks: scores come from
 the application's existing evaluation, exactly as for a CSV import.
 
-**Staged and all-or-nothing.** "Check sheets" (dry run, the default) reads
-and validates everything and saves nothing. "Import and evaluate" saves
-only when every sheet is clean, in one transaction through the existing
-answer import. Any error blocks the whole batch; no sheet is skipped.
+**Pending batches and review (Stage 3).** Uploading images creates a
+stored **pending batch**; no answer or result exists until it is
+committed. Clear answers are accepted automatically. Anything doubtful
+becomes a review item for an admin, with a crop of the sheet (or the whole
+sheet) next to what the engine detected:
+
+- a multi-marked answer (two or more bubbles) - choose A, B, C, D or blank;
+- an invalid or missing answer - same;
+- a roll number that is missing, malformed, not on the roster or used by
+  two sheets - type the right roll number;
+- an unreadable sheet (e.g. markers not found) - it blocks the commit; fix
+  or rescan it and upload again, or discard the batch.
+
+The teacher's decision is stored separately (`final_answer`); what the
+engine detected is never overwritten and a multi-mark is never turned into
+a blank by the system. Batch states: `PROCESSING`, `REVIEW_REQUIRED`,
+`READY_TO_COMMIT`, `COMMITTED`, `DISCARDED`, `FAILED`; illegal moves are
+refused. Two reviewers cannot silently overwrite each other (a stale
+decision answers 409 "changed by someone else").
+
+**Commit.** "Commit batch" is possible only when every item is settled and
+re-checks the whole batch against the test as it is now. It then runs the
+existing answer import and evaluation, the audit entries and the batch's
+COMMITTED state in **one transaction**: it all happens or none of it does.
+If answers already exist for the test, commit is refused unless "Replace
+existing answers" is ticked; replacing uses the same safety backup as a
+CSV import. **Discard** removes a pending batch and its images and leaves
+every existing answer, result and report untouched; discarding twice is
+harmless.
+
+**Images and privacy.** Pending-batch images are stored only on this
+computer under `<data dir>/omr/` (override: `COACHING_OMR_DIR`). They are
+shown only through signed-in, institute-checked endpoints
+(`GET /api/omr/sheets/{id}/image`); no file path is ever sent to the
+browser, and the images are removed when the batch is committed,
+discarded or fails. Audit entries record who created/reviewed/committed/
+discarded a batch and counts, never names, roll numbers, answers or
+images.
+
+**Who can use it.** Every OMR endpoint and the Import page are
+**admin only** (as for CSV imports); teachers get 403 and no Import
+button. Review is by any admin of the institute.
 
 **What is checked.** Each sheet's roll number must match a student in the
 test's batch exactly (no fuzzy matching); two sheets with the same roll
-are an error; answers are only taken for the selected test's questions
-(other fields on the sheet are reported, never imported); every upload
-must be a real PNG/JPEG within the size limits.
+are blocked until fixed; answers are only taken for the selected test's
+questions (other fields on the sheet are reported, never imported); every
+upload must be a real PNG/JPEG within the size limits.
 
 **Recognition states.** Each answer is `recognized` (one option),
 `blank`, `multi_mark` (two or more options), `invalid` or
 `review_required` (no value). A blank and a multi-mark are never mixed
 up, even though evaluation scores both as no answer.
 
-**Temporary behaviour until a review screen exists (Stage 3).** A batch
-containing any multi-marked, invalid or missing answer is reported as
-**Review required** and is **not imported**, so an ambiguous mark can never
-be stored as an ordinary blank. Fix or rescan those sheets and upload again.
-
 **Limits.** At most 100 images per batch, 12 MB each, 200 MB in total
-(see `backend/app/config.py`). Images are processed in the request and
-are never stored. Processing is synchronous; there is no job queue.
+(see `backend/app/config.py`). Processing is synchronous (no job queue); a batch left
+"processing" for over 30 minutes is shown as failed (interrupted).
 
 **Template.** The sheet layout is a controlled template under
 `backend/app/omr/templates/` (a layout file for the engine plus a
-manifest saying which fields are the roll number and the questions). The
-built-in `prototype-60q` template is a **prototype**: a 6-digit numeric
-roll number and 60 four-option questions, for flat, aligned images. The
+manifest saying which fields are the roll number and the questions). Two
+**prototype** templates are built in, each a 6-digit numeric roll number
+and 60 four-option questions: `prototype-60q` (flat, aligned images) and
+`prototype-marked-60q`, which has four corner markers so ordinary
+photographs (tilted, with perspective) can be read; print it with
+`python scripts/make_prototype_sheet.py`. The
 roll numbers in a roster must be exactly those digits to match. A real
 institute's sheet needs its own template; there is no template editor.
 

@@ -109,6 +109,9 @@ class RecognitionRun:
     rows: dict[int, dict[str, str]] = field(default_factory=dict)
     # sheet indexes OMRChecker reported as unreadable
     errored: set[int] = field(default_factory=set)
+    # sheet index -> the engine's annotated image, aligned to the template
+    # page (inside the working folder: copy it before the folder is removed)
+    checked: dict[int, Path] = field(default_factory=dict)
 
 
 class BatchWorkspace:
@@ -120,6 +123,7 @@ class BatchWorkspace:
         self.input_dir: Path | None = None
         self.output_dir: Path | None = None
         self._count = 0
+        self._originals: dict[int, Path] = {}
 
     def __enter__(self):
         self.root = Path(tempfile.mkdtemp(prefix="omr-", dir=_work_root()))
@@ -131,10 +135,12 @@ class BatchWorkspace:
         for path in self.template.directory.iterdir():
             if path.is_file() and path.name != "manifest.json":
                 shutil.copyfile(path, self.input_dir / path.name)
-        # Headless-safe: never show or save preview images.
+        # Headless-safe: never open a window. The engine's annotated image
+        # (aligned to the template, detections drawn on) is kept so a
+        # reviewer can see what it detected.
         (self.input_dir / "config.json").write_text(
             '{"outputs": {"show_image_level": 0, "save_image_level": 0, '
-            '"save_detections": false}}',
+            '"save_detections": true}}',
             encoding="utf-8",
         )
         return self
@@ -148,8 +154,13 @@ class BatchWorkspace:
 
     def add_image(self, index: int, data: bytes, info: ImageInfo) -> None:
         """Store one image under a name we choose (never the upload's)."""
-        (self.input_dir / f"sheet_{index:04d}{info.extension}").write_bytes(data)
+        path = self.input_dir / f"sheet_{index:04d}{info.extension}"
+        path.write_bytes(data)
+        self._originals[index] = path
         self._count += 1
+
+    def original_path(self, index: int) -> Path | None:
+        return self._originals.get(index)
 
     @property
     def image_count(self) -> int:
@@ -309,5 +320,14 @@ def run_recognition(workspace: BatchWorkspace) -> RecognitionRun:
             index = _index_of(row)
             if index is not None:
                 run.errored.add(index)
+
+        # Annotated images; multi-marked sheets may be filed in a subfolder.
+        for folder in (out / "CheckedOMRs", out / "CheckedOMRs" / "_MULTI_"):
+            if not folder.is_dir():
+                continue
+            for path in folder.iterdir():
+                match = _FILE_ID.match(path.name)
+                if match and path.is_file():
+                    run.checked.setdefault(int(match.group(1)), path)
 
     return run

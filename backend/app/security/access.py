@@ -6,6 +6,9 @@ Ownership anchors:
 - Batch.institute_id owns batches, and through them students, tests,
   questions, answers, results and teacher actions.
 - Chapter.institute_id owns chapters, and through them topics.
+- OMRBatch.institute_id owns OMR review batches, and through them their
+  sheets, answers and stored images. The batch's test must also belong
+  to the same institute.
 
 find_* return the object only when it belongs to the user's institute,
 otherwise None. owned_* are FastAPI path dependencies that return the
@@ -20,6 +23,9 @@ from ..database.connection import get_db
 from ..database.models import (
     Batch,
     Chapter,
+    OMRAnswer,
+    OMRBatch,
+    OMRSheet,
     Student,
     TeacherAction,
     Test,
@@ -73,6 +79,32 @@ def find_topic(db: Session, user: User, topic_id: int) -> Topic | None:
     if topic is None or find_chapter(db, user, topic.chapter_id) is None:
         return None
     return topic
+
+
+def find_omr_batch(db: Session, user: User, batch_id: int | None) -> OMRBatch | None:
+    if batch_id is None:
+        return None
+    batch = db.get(OMRBatch, batch_id)
+    if batch is None or batch.institute_id != user.institute_id:
+        return None
+    # Defence in depth: the test it belongs to must be ours as well.
+    if find_test(db, user, batch.test_id) is None:
+        return None
+    return batch
+
+
+def find_omr_sheet(db: Session, user: User, sheet_id: int) -> OMRSheet | None:
+    sheet = db.get(OMRSheet, sheet_id)
+    if sheet is None or find_omr_batch(db, user, sheet.batch_id) is None:
+        return None
+    return sheet
+
+
+def find_omr_answer(db: Session, user: User, answer_id: int) -> OMRAnswer | None:
+    answer = db.get(OMRAnswer, answer_id)
+    if answer is None or find_omr_sheet(db, user, answer.sheet_id) is None:
+        return None
+    return answer
 
 
 def institute_batches(db: Session, user: User):
@@ -139,3 +171,28 @@ def owned_test_pair(
         _found(find_test(db, user, previous_test_id), "Test"),
         _found(find_test(db, user, current_test_id), "Test"),
     )
+
+
+def owned_omr_batch(
+    batch_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> OMRBatch:
+    return _found(find_omr_batch(db, user, batch_id), "OMR batch")
+
+
+def owned_omr_sheet(
+    sheet_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> OMRSheet:
+    return _found(find_omr_sheet(db, user, sheet_id), "OMR sheet")
+
+
+def owned_omr_answer(
+    item_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> OMRAnswer:
+    return _found(find_omr_answer(db, user, item_id), "Review item")
+

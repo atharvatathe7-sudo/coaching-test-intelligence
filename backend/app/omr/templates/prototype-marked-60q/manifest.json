@@ -1,0 +1,25 @@
+{
+  "id": "prototype-marked-60q",
+  "version": 1,
+  "description": "Prototype sheet with four corner alignment markers: 6-digit numeric roll number and 60 four-option questions in two columns of 30. Works on photographs, not only flat scans. Project-owned design; print it with scripts/make_prototype_sheet.py.",
+  "omr_template": "template.json",
+  "options": [
+    "A",
+    "B",
+    "C",
+    "D"
+  ],
+  "roll": {
+    "field": "Roll",
+    "digits": 6
+  },
+  "questions": {
+    "label": "q{n}",
+    "first": 1,
+    "last": 60
+  },
+  "sheet": {
+    "margin": 60,
+    "marker": "omr_marker.png"
+  }
+}

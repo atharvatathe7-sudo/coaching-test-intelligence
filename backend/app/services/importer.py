@@ -817,7 +817,21 @@ def import_answers(
     *,
     requested_test_id: int | None = None,
     actor: User | None = None,
+    commit: bool = True,
+    source: str = "csv",
+    audit_extra: dict | None = None,
 ) -> dict:
+    """
+    Validate and import answers for a test.
+
+    commit=False leaves the transaction open: everything (answers,
+    results, audit entry) is written but not committed, and the caller
+    commits or rolls back together with its own changes. The returned
+    status is still "imported" in that case. On any failure the session is
+    rolled back, which also discards the caller's uncommitted changes.
+
+    `source` ("csv" or "omr") is recorded in the audit entry.
+    """
     report = ImportReport()
     test_id = test.id if test is not None else requested_test_id
 
@@ -927,10 +941,15 @@ def import_answers(
                     "answer_records": len(records),
                     "replaced_answer_records": existing_rows if replacing else 0,
                     "students_evaluated": len(results),
+                    "source": source,
+                    **(audit_extra or {}),
                 },
             )
 
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
     except Exception as exc:
         db.rollback()
         _commit_failed(report, ANSWERS_FILE, exc)

@@ -390,3 +390,148 @@
   font-size: 17px;
   font-weight: 700;
 }
+
+/* ---------- OMR review ---------- */
+
+.omr-batch-counts {
+  margin: 6px 0;
+}
+
+.omr-batch-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: baseline;
+  font-size: 14px;
+}
+
+.omr-ok { color: #2d7a46; }
+.omr-warn { color: #9a6700; font-weight: 650; }
+.omr-bad { color: #a33b2a; font-weight: 650; }
+
+.omr-batch-list h3 {
+  margin: 14px 0 6px;
+  font-size: 14px;
+}
+
+.omr-batch-card {
+  margin-top: 8px;
+  padding: 12px 14px;
+  border: 1px solid #e6eaf0;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.omr-batch-card.status-REVIEW_REQUIRED { border-color: #ecd9a3; background: #fffbee; }
+.omr-batch-card.status-READY_TO_COMMIT,
+.omr-batch-card.status-COMMITTED { border-color: #bfdcc7; background: #f6fbf7; }
+.omr-batch-card.status-FAILED { border-color: #f0c2b9; background: #fff7f5; }
+
+.omr-batch-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.omr-batch-status { font-weight: 750; }
+.omr-batch-meta { color: #697488; font-size: 12px; flex: 1; }
+
+.omr-items {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.omr-item {
+  padding: 14px 16px;
+  border: 1px solid #ecd9a3;
+  border-radius: 12px;
+  background: #fffdf5;
+}
+
+.omr-item.is-resolved {
+  border-color: #bfdcc7;
+  background: #f6fbf7;
+}
+
+.omr-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.omr-reason { color: #9a6700; font-size: 13px; }
+
+.omr-compare {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 10px 0;
+}
+
+.omr-detected,
+.omr-selected {
+  flex: 1 1 200px;
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid #e6eaf0;
+}
+
+.omr-selected { border-color: #bfdcc7; }
+
+.omr-compare-label {
+  color: #697488;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.omr-detected-value,
+.omr-selected-value { font-size: 20px; font-weight: 750; }
+
+.omr-image-crop canvas,
+.omr-image-full img {
+  display: block;
+  max-width: 100%;
+  border: 1px solid #dce2eb;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.omr-image-full img { width: 100%; max-width: 640px; cursor: zoom-in; }
+
+.omr-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.omr-choices button {
+  min-width: 56px;
+  font-size: 16px;
+}
+
+.omr-choices button.selected {
+  background: #1f2a44;
+  border-color: #1f2a44;
+  color: #ffffff;
+}
+
+.omr-roll-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+  margin-top: 10px;
+}
+
+.omr-problems { margin: 8px 0 0; padding-left: 20px; color: #a33b2a; font-size: 13px; }

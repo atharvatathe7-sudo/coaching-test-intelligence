@@ -17,6 +17,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 _TEST_DB_DIR = tempfile.mkdtemp(prefix="coaching-test-db-")
 os.environ["COACHING_DB_PATH"] = str(Path(_TEST_DB_DIR) / "test.db")
+# OMR review images go to the same throwaway folder, never a real user one.
+os.environ["COACHING_OMR_DIR"] = str(Path(_TEST_DB_DIR) / "omr")
 
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
